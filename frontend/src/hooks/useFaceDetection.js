@@ -344,5 +344,6 @@ export default function useFaceDetection(enabled = false) {
     cameraReady,
     error,
     videoRef,
+    stream: streamRef.current,
   };
 }

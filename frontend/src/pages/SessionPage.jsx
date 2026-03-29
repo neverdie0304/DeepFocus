@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useSession from '../hooks/useSession';
 import useFaceDetection from '../hooks/useFaceDetection';
@@ -12,6 +12,14 @@ export default function SessionPage() {
   const session = useSession();
   const [showConsent, setShowConsent] = useState(false);
   const face = useFaceDetection(session.cameraEnabled && session.status !== 'idle');
+  const previewRef = useRef(null);
+
+  // Attach camera stream to visible preview element
+  useEffect(() => {
+    if (previewRef.current && face.stream) {
+      previewRef.current.srcObject = face.stream;
+    }
+  }, [face.stream]);
 
   // Sync full face features into session (includes backward-compatible booleans)
   useEffect(() => {
@@ -79,6 +87,30 @@ export default function SessionPage() {
 
       {/* Focus Gauge */}
       {!isIdle && <FocusGauge score={session.currentScore} />}
+
+      {/* Camera Preview */}
+      {!isIdle && session.cameraEnabled && face.cameraReady && (
+        <div className="relative w-48 rounded-xl overflow-hidden border border-gray-700 shadow-lg">
+          <video
+            ref={previewRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-auto mirror"
+            style={{ transform: 'scaleX(-1)' }}
+          />
+          {/* Status overlay */}
+          <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${
+            face.facePresent && !face.lookingAway ? 'bg-green-500' :
+            face.facePresent ? 'bg-yellow-500' : 'bg-red-500'
+          } shadow-lg`} />
+          {!face.facePresent && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+              <span className="text-red-400 text-xs font-medium">No Face Detected</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Signal Indicators */}
       {!isIdle && (
