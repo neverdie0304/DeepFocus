@@ -115,10 +115,6 @@ export default function SessionPage() {
       {/* Signal Indicators */}
       {!isIdle && (
         <div className="flex flex-wrap justify-center gap-6 text-sm">
-          <div className={`flex items-center gap-1.5 ${session.signals.isTabHidden ? 'text-red-400' : 'text-gray-500'}`}>
-            <span className={`w-2 h-2 rounded-full ${session.signals.isTabHidden ? 'bg-red-400' : 'bg-gray-600'}`} />
-            Tab {session.signals.isTabHidden ? 'Hidden' : 'Visible'}
-          </div>
           <div className={`flex items-center gap-1.5 ${session.signals.isIdle ? 'text-yellow-400' : 'text-gray-500'}`}>
             <span className={`w-2 h-2 rounded-full ${session.signals.isIdle ? 'bg-yellow-400' : 'bg-gray-600'}`} />
             {session.signals.isIdle ? 'Idle' : 'Active'}

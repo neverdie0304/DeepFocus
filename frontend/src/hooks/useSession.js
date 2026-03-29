@@ -43,9 +43,8 @@ export default function useSession() {
     samplingRef.current = setInterval(() => {
       const { isTabHidden, isIdle } = signals;
 
-      // Rule-based score (used until ML model is loaded)
+      // Rule-based score (tab switching excluded — see REPORT_NOTES.md)
       const score = computeFocusScore({
-        isTabHidden,
         isIdle,
         isFaceMissing,
         isLookingAway,
@@ -56,7 +55,7 @@ export default function useSession() {
 
       // Update totals (2 seconds per sample)
       if (isIdle) totals.current.idle += 2;
-      if (isTabHidden) totals.current.tabHidden += 2;
+      if (isTabHidden) totals.current.tabHidden += 2; // still tracked for ML features
       if (isFaceMissing && cameraEnabled) totals.current.faceMissing += 2;
       if (isLookingAway && cameraEnabled) totals.current.lookingAway += 2;
 

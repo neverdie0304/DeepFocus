@@ -7,18 +7,18 @@
 /* ───────────────────────────────────────────────────
    Rule-based scoring (original, kept as fallback)
    ─────────────────────────────────────────────────── */
-export function computeFocusScore({ isTabHidden, isIdle, isFaceMissing, isLookingAway, cameraEnabled }) {
+export function computeFocusScore({ isIdle, isFaceMissing, isLookingAway, cameraEnabled }) {
+  // Tab switching removed from penalty: it is a normal part of computer work,
+  // not a reliable distraction signal. Retained as ML feature only.
   if (cameraEnabled) {
     let score = 100;
-    if (isFaceMissing) score -= 40;
-    if (isLookingAway) score -= 30;
-    if (isTabHidden) score -= 20;
-    if (isIdle) score -= 10;
+    if (isFaceMissing) score -= 50;
+    if (isLookingAway) score -= 35;
+    if (isIdle) score -= 15;
     return Math.max(0, score);
   } else {
     let score = 100;
-    if (isTabHidden) score -= 67;
-    if (isIdle) score -= 33;
+    if (isIdle) score -= 100;
     return Math.max(0, score);
   }
 }
