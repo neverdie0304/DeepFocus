@@ -66,9 +66,6 @@ export function assembleFeatureVector({
     focus_ema_5min: temporalFeatures.focusEma5min ?? 100,
     focus_trend: temporalFeatures.focusTrend ?? 0,
     distraction_burst_count: temporalFeatures.distractionBurstCount ?? 0,
-
-    // ── Meta ──
-    camera_enabled: cameraEnabled,
   };
 }
 
@@ -91,11 +88,10 @@ export async function computeFocusScoreML(featureVector, scalerParams = null) {
   const isLookingAway =
     featureVector.head_yaw !== null &&
     (Math.abs(featureVector.head_yaw) > 25 || Math.abs(featureVector.head_pitch) > 20);
-  const isTabHidden = featureVector.tab_switch_count > 0 && featureVector.time_since_tab_return < 2;
   const isIdle = featureVector.idle_duration > 15;
-  const cameraEnabled = featureVector.camera_enabled;
+  const cameraEnabled = featureVector.face_confidence !== null;
 
-  return computeFocusScore({ isTabHidden, isIdle, isFaceMissing, isLookingAway, cameraEnabled });
+  return computeFocusScore({ isIdle, isFaceMissing, isLookingAway, cameraEnabled });
 }
 
 /* ───────────────────────────────────────────────────
