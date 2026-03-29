@@ -178,6 +178,7 @@ export default function useFaceDetection(enabled = false) {
   const [features, setFeatures] = useState(DEFAULT_FEATURES);
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState(null);
+  const [stream, setStream] = useState(null);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -200,6 +201,7 @@ export default function useFaceDetection(enabled = false) {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+      setStream(null);
     }
     if (landmarkerRef.current) {
       landmarkerRef.current.close?.();
@@ -227,6 +229,7 @@ export default function useFaceDetection(enabled = false) {
         });
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
+        setStream(stream);
 
         const video = document.createElement('video');
         video.srcObject = stream;
@@ -344,6 +347,6 @@ export default function useFaceDetection(enabled = false) {
     cameraReady,
     error,
     videoRef,
-    stream: streamRef.current,
+    stream,
   };
 }
