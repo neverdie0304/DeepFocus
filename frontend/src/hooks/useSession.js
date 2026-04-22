@@ -6,10 +6,13 @@ import useTemporalFeatures from './useTemporalFeatures';
 import { computeFocusScore, assembleFeatureVector } from '../utils/scoring';
 import { createSession, updateSession, uploadEvents } from '../api/sessions';
 
+const PERIODIC_UPLOAD_INTERVAL = 30000; // 30s — flush buffered events to server
+
 export default function useSession() {
   const timer = useTimer();
   const [sessionId, setSessionId] = useState(null);
-  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [cameraEnabled, setCameraEnabled] = useState(true); // default ON
+  const [taskType, setTaskType] = useState('other');
   const [events, setEvents] = useState([]);
   const [currentScore, setCurrentScore] = useState(100);
   const [ending, setEnding] = useState(false);
@@ -29,6 +32,16 @@ export default function useSession() {
   const samplingRef = useRef(null);
   const startTimeRef = useRef(null);
 
+  // Periodic upload refs
+  const uploadedCountRef = useRef(0); // how many events already uploaded
+  const periodicUploadRef = useRef(null);
+  const sessionIdRef = useRef(null); // needed inside interval
+  const eventsRef = useRef([]);      // latest events for interval closure
+
+  // Keep refs in sync
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { eventsRef.current = events; }, [events]);
+
   // Backward-compatible derived booleans from face features
   const isFaceMissing = !faceFeatures.facePresent;
   const isLookingAway = faceFeatures.lookingAway || false;
@@ -43,7 +56,6 @@ export default function useSession() {
     samplingRef.current = setInterval(() => {
       const { isTabHidden, isIdle } = signals;
 
-      // Rule-based score (tab switching excluded — see REPORT_NOTES.md)
       const score = computeFocusScore({
         isIdle,
         isFaceMissing,
@@ -53,13 +65,11 @@ export default function useSession() {
 
       setCurrentScore(score);
 
-      // Update totals (2 seconds per sample)
       if (isIdle) totals.current.idle += 2;
-      if (isTabHidden) totals.current.tabHidden += 2; // still tracked for ML features
+      if (isTabHidden) totals.current.tabHidden += 2;
       if (isFaceMissing && cameraEnabled) totals.current.faceMissing += 2;
       if (isLookingAway && cameraEnabled) totals.current.lookingAway += 2;
 
-      // Assemble full ML feature vector
       const mlFeatures = assembleFeatureVector({
         faceFeatures,
         behaviourFeatures: signals,
@@ -73,12 +83,10 @@ export default function useSession() {
         {
           timestamp: new Date().toISOString(),
           focus_score: score,
-          // Backward-compatible booleans
           is_tab_hidden: isTabHidden,
           is_idle: isIdle,
           is_face_missing: isFaceMissing,
           is_looking_away: isLookingAway,
-          // ML features
           ...mlFeatures,
         },
       ]);
@@ -89,21 +97,49 @@ export default function useSession() {
     };
   }, [isRunning, signals, faceFeatures, isFaceMissing, isLookingAway, cameraEnabled, contextSignals, temporal]);
 
+  /* ── Periodic event upload (every 30s) ── */
+  useEffect(() => {
+    if (!isRunning) {
+      if (periodicUploadRef.current) clearInterval(periodicUploadRef.current);
+      return;
+    }
+
+    periodicUploadRef.current = setInterval(async () => {
+      const sid = sessionIdRef.current;
+      const allEvents = eventsRef.current;
+      if (!sid || allEvents.length <= uploadedCountRef.current) return;
+
+      const pending = allEvents.slice(uploadedCountRef.current);
+      try {
+        await uploadEvents(sid, pending);
+        uploadedCountRef.current = allEvents.length;
+      } catch (err) {
+        console.error('Periodic upload failed (will retry):', err);
+      }
+    }, PERIODIC_UPLOAD_INTERVAL);
+
+    return () => {
+      if (periodicUploadRef.current) clearInterval(periodicUploadRef.current);
+    };
+  }, [isRunning]);
+
   const startSession = useCallback(async () => {
     const now = new Date().toISOString();
     startTimeRef.current = now;
     totals.current = { idle: 0, tabHidden: 0, faceMissing: 0, lookingAway: 0 };
     setEvents([]);
     setCurrentScore(100);
+    uploadedCountRef.current = 0;
 
     const session = await createSession({
       start_time: now,
       mode: cameraEnabled ? 'camera_on' : 'camera_off',
+      tag: taskType,
     });
     setSessionId(session.id);
     timer.start();
     return session.id;
-  }, [cameraEnabled, timer]);
+  }, [cameraEnabled, taskType, timer]);
 
   const pauseSession = useCallback(() => timer.pause(), [timer]);
   const resumeSession = useCallback(() => timer.resume(), [timer]);
@@ -117,12 +153,14 @@ export default function useSession() {
       : 0;
 
     try {
-      // Upload events — if this fails, still save session metadata
-      if (events.length > 0) {
+      // Upload any remaining unsent events
+      const pending = events.slice(uploadedCountRef.current);
+      if (pending.length > 0) {
         try {
-          await uploadEvents(sessionId, events);
+          await uploadEvents(sessionId, pending);
+          uploadedCountRef.current = events.length;
         } catch (err) {
-          console.error('Event upload failed:', err);
+          console.error('Final event upload failed:', err);
         }
       }
 
@@ -155,10 +193,10 @@ export default function useSession() {
     signals,
     cameraEnabled,
     setCameraEnabled,
-    // New: face features setter for SessionPage to sync
+    taskType,
+    setTaskType,
     faceFeatures,
     setFaceFeatures,
-    // Backward-compatible derived booleans
     cameraSignals: { isFaceMissing, isLookingAway },
     events,
     ending,

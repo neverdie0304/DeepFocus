@@ -152,6 +152,36 @@ export default function SessionPage() {
         </div>
       )}
 
+      {/* Task Type Selector (only before session starts) */}
+      {isIdle && (
+        <div className="w-full max-w-md space-y-3">
+          <p className="text-sm text-gray-400 text-center">What are you doing this session?</p>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { value: 'writing', label: 'Writing', icon: '📝' },
+              { value: 'coding', label: 'Coding', icon: '💻' },
+              { value: 'reading', label: 'Reading', icon: '📚' },
+              { value: 'video', label: 'Video', icon: '🎥' },
+              { value: 'study', label: 'Study', icon: '✏️' },
+              { value: 'other', label: 'Other', icon: '🗂️' },
+            ].map((task) => (
+              <button
+                key={task.value}
+                onClick={() => session.setTaskType(task.value)}
+                className={`flex flex-col items-center gap-1 py-3 rounded-lg border transition-colors ${
+                  session.taskType === task.value
+                    ? 'bg-indigo-600 border-indigo-500 text-white'
+                    : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'
+                }`}
+              >
+                <span className="text-xl">{task.icon}</span>
+                <span className="text-xs">{task.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Camera Toggle (only before session starts) */}
       {isIdle && (
         <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">

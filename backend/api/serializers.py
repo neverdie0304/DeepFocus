@@ -86,7 +86,7 @@ class FocusSessionDetailSerializer(serializers.ModelSerializer):
 class FocusSessionCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = FocusSession
-        fields = ('id', 'start_time', 'mode')
+        fields = ('id', 'start_time', 'mode', 'tag')
 
 
 class FocusSessionUpdateSerializer(serializers.ModelSerializer):
