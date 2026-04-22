@@ -264,7 +264,7 @@ export default function useFaceDetection(enabled = false) {
         const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-assets/face_landmarker.task',
+              'https://storage.googleapis.com/mediapipe-assets/face_landmarker_v2_with_blendshapes.task',
             delegate: 'GPU',
           },
           runningMode: 'VIDEO',
