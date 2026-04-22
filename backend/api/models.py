@@ -53,6 +53,20 @@ class SessionEvent(models.Model):
     gaze_y = models.FloatField(null=True, blank=True)
     face_confidence = models.FloatField(null=True, blank=True)
 
+    # ── ML Features: Blendshapes (engagement-relevant) ──
+    brow_down_left = models.FloatField(null=True, blank=True)
+    brow_down_right = models.FloatField(null=True, blank=True)
+    brow_inner_up = models.FloatField(null=True, blank=True)
+    eye_squint_left = models.FloatField(null=True, blank=True)
+    eye_squint_right = models.FloatField(null=True, blank=True)
+    eye_wide_left = models.FloatField(null=True, blank=True)
+    eye_wide_right = models.FloatField(null=True, blank=True)
+    jaw_open = models.FloatField(null=True, blank=True)
+    mouth_frown_left = models.FloatField(null=True, blank=True)
+    mouth_frown_right = models.FloatField(null=True, blank=True)
+    mouth_smile_left = models.FloatField(null=True, blank=True)
+    mouth_smile_right = models.FloatField(null=True, blank=True)
+
     # ── ML Features: Behavioral ──
     keystroke_rate = models.FloatField(null=True, blank=True)
     mouse_velocity = models.FloatField(null=True, blank=True)

@@ -117,8 +117,13 @@ export default function useSession() {
       : 0;
 
     try {
+      // Upload events — if this fails, still save session metadata
       if (events.length > 0) {
-        await uploadEvents(sessionId, events);
+        try {
+          await uploadEvents(sessionId, events);
+        } catch (err) {
+          console.error('Event upload failed:', err);
+        }
       }
 
       await updateSession(sessionId, {
@@ -130,6 +135,8 @@ export default function useSession() {
         time_face_missing: totals.current.faceMissing,
         time_looking_away: totals.current.lookingAway,
       });
+    } catch (err) {
+      console.error('Session save failed:', err);
     } finally {
       setEnding(false);
     }

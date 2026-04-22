@@ -168,6 +168,19 @@ const DEFAULT_FEATURES = {
   faceConfidence: 0,
   facePresent: false,
   lookingAway: false,
+  // Blendshapes (engagement-relevant subset)
+  browDownLeft: 0,
+  browDownRight: 0,
+  browInnerUp: 0,
+  eyeSquintLeft: 0,
+  eyeSquintRight: 0,
+  eyeWideLeft: 0,
+  eyeWideRight: 0,
+  jawOpen: 0,
+  mouthFrownLeft: 0,
+  mouthFrownRight: 0,
+  mouthSmileLeft: 0,
+  mouthSmileRight: 0,
 };
 
 /* ═══════════════════════════════════════════════════
@@ -256,7 +269,7 @@ export default function useFaceDetection(enabled = false) {
           },
           runningMode: 'VIDEO',
           numFaces: 1,
-          outputFaceBlendshapes: false,
+          outputFaceBlendshapes: true,
           outputFacialTransformationMatrixes: true,
         });
         if (cancelled) { landmarker.close(); stopCamera(); return; }
@@ -299,6 +312,15 @@ export default function useFaceDetection(enabled = false) {
                 // Face confidence (use first detection score if available)
                 const faceConfidence = lm[NOSE_TIP] ? 1.0 : 0.0;
 
+                // Blendshapes — extract engagement-relevant subset
+                const blendshapes = {};
+                if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+                  const bs = results.faceBlendshapes[0].categories;
+                  for (const cat of bs) {
+                    blendshapes[cat.categoryName] = Math.round(cat.score * 1000) / 1000;
+                  }
+                }
+
                 // Backward-compatible boolean: looking away
                 const lookingAway =
                   Math.abs(pose.yaw) > YAW_THRESHOLD ||
@@ -315,6 +337,19 @@ export default function useFaceDetection(enabled = false) {
                   faceConfidence,
                   facePresent: true,
                   lookingAway,
+                  // Engagement-relevant blendshapes
+                  browDownLeft: blendshapes.browDownLeft ?? 0,
+                  browDownRight: blendshapes.browDownRight ?? 0,
+                  browInnerUp: blendshapes.browInnerUp ?? 0,
+                  eyeSquintLeft: blendshapes.eyeSquintLeft ?? 0,
+                  eyeSquintRight: blendshapes.eyeSquintRight ?? 0,
+                  eyeWideLeft: blendshapes.eyeWideLeft ?? 0,
+                  eyeWideRight: blendshapes.eyeWideRight ?? 0,
+                  jawOpen: blendshapes.jawOpen ?? 0,
+                  mouthFrownLeft: blendshapes.mouthFrownLeft ?? 0,
+                  mouthFrownRight: blendshapes.mouthFrownRight ?? 0,
+                  mouthSmileLeft: blendshapes.mouthSmileLeft ?? 0,
+                  mouthSmileRight: blendshapes.mouthSmileRight ?? 0,
                 });
               } else {
                 setFeatures({ ...DEFAULT_FEATURES });

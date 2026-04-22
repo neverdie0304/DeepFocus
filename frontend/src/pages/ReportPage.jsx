@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -12,19 +12,22 @@ import {
   Filler,
 } from 'chart.js';
 import { Line, Doughnut } from 'react-chartjs-2';
-import { getSession, updateSession, submitSelfReport } from '../api/sessions';
+import { getSession, updateSession, submitSelfReport, deleteSession } from '../api/sessions';
 import { formatTime } from '../utils/scoring';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler);
 
 export default function ReportPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [session, setSession] = useState(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [note, setNote] = useState('');
   const [tag, setTag] = useState('');
   const [selfReportScore, setSelfReportScore] = useState(null);
   const [selfReportSaved, setSelfReportSaved] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
 
   useEffect(() => {
     getSession(id)
@@ -37,7 +40,13 @@ export default function ReportPage() {
   }, [id]);
 
   const handleSaveNote = async () => {
-    await updateSession(id, { note, tag });
+    try {
+      await updateSession(id, { note, tag });
+      setNoteSaved(true);
+      setTimeout(() => setNoteSaved(false), 3000);
+    } catch {
+      alert('Failed to save note.');
+    }
   };
 
   if (loading) {
@@ -225,12 +234,48 @@ export default function ReportPage() {
           rows={3}
           maxLength={200}
         />
-        <button
-          onClick={handleSaveNote}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-2 rounded"
-        >
-          Save Note
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSaveNote}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-2 rounded"
+          >
+            Save Note
+          </button>
+          {noteSaved && (
+            <span className="text-green-400 text-sm">Saved!</span>
+          )}
+        </div>
+      </div>
+
+      {/* Delete Session */}
+      <div className="border border-red-900/50 rounded-xl p-6">
+        {!showDeleteConfirm ? (
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="text-red-400 hover:text-red-300 text-sm"
+          >
+            Delete this session
+          </button>
+        ) : (
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-400">Are you sure?</span>
+            <button
+              onClick={async () => {
+                await deleteSession(id);
+                navigate('/dashboard');
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white text-sm px-4 py-2 rounded"
+            >
+              Yes, delete
+            </button>
+            <button
+              onClick={() => setShowDeleteConfirm(false)}
+              className="text-gray-400 hover:text-gray-300 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

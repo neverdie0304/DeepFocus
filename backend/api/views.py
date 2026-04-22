@@ -96,6 +96,14 @@ class SessionDetailView(APIView):
         serializer.save()
         return Response(FocusSessionDetailSerializer(session).data)
 
+    def delete(self, request, pk):
+        try:
+            session = self._get_session(request, pk)
+        except FocusSession.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        session.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class SessionEventsView(APIView):
     def post(self, request, pk):

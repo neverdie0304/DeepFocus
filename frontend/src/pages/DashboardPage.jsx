@@ -11,7 +11,7 @@ import {
   Filler,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
-import { getWeeklyAnalytics } from '../api/sessions';
+import { getWeeklyAnalytics, listSessions } from '../api/sessions';
 import { formatTime } from '../utils/scoring';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
@@ -38,12 +38,20 @@ export default function DashboardPage() {
     return getMonday(today);
   });
   const [data, setData] = useState(null);
+  const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    getWeeklyAnalytics(weekDate)
-      .then(setData)
+    const weekEnd = addDays(weekDate, 6);
+    Promise.all([
+      getWeeklyAnalytics(weekDate),
+      listSessions({ from: weekDate, to: weekEnd }),
+    ])
+      .then(([analytics, sessionList]) => {
+        setData(analytics);
+        setSessions(sessionList);
+      })
       .finally(() => setLoading(false));
   }, [weekDate]);
 
@@ -197,6 +205,54 @@ export default function DashboardPage() {
                 <span className="text-gray-400 text-sm">{formatTime(Math.round(d.value))}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent Sessions */}
+      {sessions.length > 0 && (
+        <div className="bg-gray-900 rounded-xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Recent Sessions</h3>
+            {sessions.length > 5 && (
+              <Link to="/history" className="text-indigo-400 hover:text-indigo-300 text-sm">
+                View all ({sessions.length})
+              </Link>
+            )}
+          </div>
+          <div className="space-y-2">
+            {sessions.slice(0, 5).map((s) => {
+              const scoreColor = (s.focus_score_final ?? 0) >= 80
+                ? 'text-green-400'
+                : (s.focus_score_final ?? 0) >= 50
+                  ? 'text-yellow-400'
+                  : 'text-red-400';
+              const date = new Date(s.start_time);
+              const dateStr = date.toLocaleDateString('en-GB', { weekday: 'short', month: 'short', day: 'numeric' });
+              const timeStr = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+              return (
+                <Link
+                  key={s.id}
+                  to={`/session/${s.id}/report`}
+                  className="flex items-center justify-between bg-gray-800 hover:bg-gray-750 rounded-lg px-4 py-3 transition-colors hover:ring-1 hover:ring-indigo-500/50"
+                >
+                  <div className="flex items-center gap-4">
+                    <span className={`text-2xl font-bold w-12 ${scoreColor}`}>
+                      {Math.round(s.focus_score_final ?? 0)}
+                    </span>
+                    <div>
+                      <p className="text-sm text-gray-200">{dateStr} at {timeStr}</p>
+                      <p className="text-xs text-gray-500">
+                        {formatTime(s.duration)} · {s.mode === 'camera_on' ? 'Camera On' : 'Camera Off'}
+                        {s.tag && <span className="ml-2 px-1.5 py-0.5 bg-gray-700 rounded text-gray-400">{s.tag}</span>}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-gray-600 text-sm">&rarr;</span>
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

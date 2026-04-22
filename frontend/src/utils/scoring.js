@@ -46,6 +46,20 @@ export function assembleFeatureVector({
     gaze_y: faceFeatures.gazeY ?? null,
     face_confidence: faceFeatures.faceConfidence ?? null,
 
+    // ── Blendshapes (engagement-relevant) ──
+    brow_down_left: faceFeatures.browDownLeft ?? 0,
+    brow_down_right: faceFeatures.browDownRight ?? 0,
+    brow_inner_up: faceFeatures.browInnerUp ?? 0,
+    eye_squint_left: faceFeatures.eyeSquintLeft ?? 0,
+    eye_squint_right: faceFeatures.eyeSquintRight ?? 0,
+    eye_wide_left: faceFeatures.eyeWideLeft ?? 0,
+    eye_wide_right: faceFeatures.eyeWideRight ?? 0,
+    jaw_open: faceFeatures.jawOpen ?? 0,
+    mouth_frown_left: faceFeatures.mouthFrownLeft ?? 0,
+    mouth_frown_right: faceFeatures.mouthFrownRight ?? 0,
+    mouth_smile_left: faceFeatures.mouthSmileLeft ?? 0,
+    mouth_smile_right: faceFeatures.mouthSmileRight ?? 0,
+
     // ── Behavioral ──
     keystroke_rate: behaviourFeatures.keystrokeRate ?? 0,
     mouse_velocity: behaviourFeatures.mouseVelocity ?? 0,

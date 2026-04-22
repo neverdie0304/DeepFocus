@@ -16,10 +16,11 @@ export default function SessionPage() {
 
   // Attach camera stream to visible preview element
   useEffect(() => {
-    if (previewRef.current && face.stream) {
-      previewRef.current.srcObject = face.stream;
-    }
-  }, [face.stream]);
+    const video = previewRef.current;
+    if (!video || !face.stream) return;
+    video.srcObject = face.stream;
+    video.play().catch(() => {});
+  }, [face.stream, face.cameraReady]);
 
   // Sync full face features into session (includes backward-compatible booleans)
   useEffect(() => {
@@ -89,7 +90,7 @@ export default function SessionPage() {
       {!isIdle && <FocusGauge score={session.currentScore} />}
 
       {/* Camera Preview */}
-      {!isIdle && session.cameraEnabled && face.cameraReady && (
+      {!isIdle && session.cameraEnabled && face.stream && (
         <div className="relative w-48 rounded-xl overflow-hidden border border-gray-700 shadow-lg">
           <video
             ref={previewRef}

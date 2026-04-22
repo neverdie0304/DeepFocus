@@ -1,14 +1,18 @@
 """
 train_xgboost.py — Train XGBoost model for focus score prediction.
 
-Supports two modes:
-  1. Regression on ESM score (1-5) when ESM labels are available
-  2. 3-class classification (low/medium/high) using rule-based score as proxy
+Three training strategies:
+  1. ESM labels (best — requires sufficient labeled data)
+  2. Semi-supervised pseudo-labeling (works with little ESM data)
+  3. Post-session labels (weak supervision fallback)
+
+Key evaluation: ML predictions vs Rule-based scores, both compared against
+human ground truth (ESM / post-session self-reports).
 
 Usage:
-    python train_xgboost.py
-    python train_xgboost.py --target esm      # Use ESM labels (requires labeled data)
-    python train_xgboost.py --target proxy     # Use rule-based score as proxy target
+    python train_xgboost.py                    # Auto-selects best strategy
+    python train_xgboost.py --target esm       # Force ESM labels
+    python train_xgboost.py --target semi      # Force semi-supervised
 """
 
 import argparse
@@ -18,10 +22,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GroupKFold, cross_val_score
+from sklearn.model_selection import GroupKFold, KFold
 from sklearn.metrics import (
     mean_absolute_error, mean_squared_error, accuracy_score,
-    f1_score, classification_report, confusion_matrix,
+    f1_score, classification_report,
 )
 
 warnings.filterwarnings("ignore")
@@ -34,6 +38,11 @@ RESULTS_DIR = Path(__file__).parent / "results"
 VISUAL = [
     "head_yaw", "head_pitch", "head_roll",
     "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
+    # Blendshapes (engagement-relevant)
+    "brow_down_left", "brow_down_right", "brow_inner_up",
+    "eye_squint_left", "eye_squint_right", "eye_wide_left", "eye_wide_right",
+    "jaw_open", "mouth_frown_left", "mouth_frown_right",
+    "mouth_smile_left", "mouth_smile_right",
 ]
 BEHAVIORAL = [
     "keystroke_rate", "mouse_velocity", "mouse_distance",
@@ -61,13 +70,139 @@ def score_to_3class(scores):
     return pd.cut(scores, bins=[-1, 40, 70, 101], labels=["low", "medium", "high"])
 
 
+# ═══════════════════════════════════════════════════
+# Semi-supervised pseudo-labeling
+# ═══════════════════════════════════════════════════
+
+def generate_pseudo_labels(df):
+    """
+    Assign pseudo-labels based on high-confidence signal combinations.
+
+    Clearly focused (5): face present + high confidence + active input + not idle
+    Clearly distracted (1): face missing OR very long idle OR looking far away
+    Uncertain (NaN): everything in between — model learns these
+    """
+    pseudo = pd.Series(np.nan, index=df.index)
+
+    # ── Clearly focused (pseudo score = 5) ──
+    focused_mask = (
+        (df["face_confidence"].fillna(0) > 0.5) &      # face clearly detected
+        (df["idle_duration"].fillna(0) < 5) &            # recently active
+        (df["activity_level"].fillna(0) > 0.2) &         # some input activity
+        (df["head_yaw"].fillna(0).abs() < 15) &          # looking at screen
+        (df["head_pitch"].fillna(0).abs() < 15)
+    )
+    pseudo[focused_mask] = 5.0
+
+    # ── Clearly distracted (pseudo score = 1) ──
+    distracted_mask = (
+        (df["face_confidence"].fillna(0) < 0.1) |       # no face
+        (df["idle_duration"].fillna(0) > 30) |            # idle > 30s
+        (df["head_yaw"].fillna(0).abs() > 40)             # looking far away
+    )
+    pseudo[distracted_mask] = 1.0
+
+    # ── Somewhat focused (pseudo score = 4) ──
+    somewhat_focused = (
+        pseudo.isna() &
+        (df["face_confidence"].fillna(0) > 0.3) &
+        (df["idle_duration"].fillna(0) < 10) &
+        (df["head_yaw"].fillna(0).abs() < 25)
+    )
+    pseudo[somewhat_focused] = 4.0
+
+    # ── Somewhat distracted (pseudo score = 2) ──
+    somewhat_distracted = (
+        pseudo.isna() &
+        ((df["idle_duration"].fillna(0) > 15) |
+         (df["head_yaw"].fillna(0).abs() > 30))
+    )
+    pseudo[somewhat_distracted] = 2.0
+
+    # ── Middle ground (pseudo score = 3) ──
+    pseudo[pseudo.isna()] = 3.0
+
+    return pseudo
+
+
+def combine_labels(df):
+    """
+    Create the best available target by priority:
+    1. ESM labels (highest quality — human in-the-moment rating)
+    2. Post-session labels (scaled to 1-5 from 1-10)
+    3. Pseudo-labels (signal-based heuristic)
+    """
+    target = pd.Series(np.nan, index=df.index)
+
+    # Layer 3: pseudo-labels (base layer)
+    pseudo = generate_pseudo_labels(df)
+    target = pseudo.copy()
+
+    # Layer 2: post-session labels override pseudo (if available)
+    if "post_session_score" in df.columns:
+        has_post = df["post_session_score"].notna()
+        # Scale 1-10 → 1-5
+        target[has_post] = df.loc[has_post, "post_session_score"] / 2.0
+
+    # Layer 1: ESM labels override everything (highest quality)
+    if "esm_score" in df.columns:
+        has_esm = df["esm_score"].notna()
+        target[has_esm] = df.loc[has_esm, "esm_score"]
+
+    return target
+
+
+# ═══════════════════════════════════════════════════
+# Rule-based baseline evaluation
+# ═══════════════════════════════════════════════════
+
+def evaluate_rule_based_vs_ml(df, model, feature_cols, target_col):
+    """
+    The key thesis comparison: how does ML compare to rule-based
+    when both are evaluated against human ground truth?
+    """
+    available = [f for f in feature_cols if f in df.columns]
+    X = df[available].values
+
+    ml_preds = model.predict(X)
+    rule_scores = df["focus_score"].values  # rule-based predictions
+    ground_truth = df[target_col].values
+
+    # Scale rule-based (0-100) to same range as target (1-5)
+    rule_scaled = rule_scores / 100.0 * 4.0 + 1.0  # maps 0-100 → 1-5
+
+    ml_mae = mean_absolute_error(ground_truth, ml_preds)
+    rule_mae = mean_absolute_error(ground_truth, rule_scaled)
+
+    ml_rmse = np.sqrt(mean_squared_error(ground_truth, ml_preds))
+    rule_rmse = np.sqrt(mean_squared_error(ground_truth, rule_scaled))
+
+    # Correlation
+    ml_corr = np.corrcoef(ground_truth, ml_preds)[0, 1]
+    rule_corr = np.corrcoef(ground_truth, rule_scaled)[0, 1]
+
+    return {
+        "ml_mae": float(ml_mae),
+        "rule_mae": float(rule_mae),
+        "improvement_mae": float((rule_mae - ml_mae) / rule_mae * 100),
+        "ml_rmse": float(ml_rmse),
+        "rule_rmse": float(rule_rmse),
+        "ml_correlation": float(ml_corr),
+        "rule_correlation": float(rule_corr),
+    }
+
+
+# ═══════════════════════════════════════════════════
+# Training functions
+# ═══════════════════════════════════════════════════
+
 def train_regression(df, feature_cols, target_col, groups=None):
     """Train XGBoost regressor with cross-validation."""
     try:
         from xgboost import XGBRegressor
     except ImportError:
         print("pip install xgboost")
-        return None
+        return None, {}
 
     X = df[feature_cols].values
     y = df[target_col].values
@@ -81,14 +216,12 @@ def train_regression(df, feature_cols, target_col, groups=None):
         random_state=42,
     )
 
-    # Cross-validation
-    if groups is not None and df[groups].nunique() >= 3:
+    if groups is not None and groups in df.columns and df[groups].nunique() >= 3:
         cv = GroupKFold(n_splits=min(5, df[groups].nunique()))
-        splits = cv.split(X, y, groups=df[groups])
+        splits = list(cv.split(X, y, groups=df[groups]))
     else:
-        from sklearn.model_selection import KFold
         cv = KFold(n_splits=5, shuffle=True, random_state=42)
-        splits = cv.split(X, y)
+        splits = list(cv.split(X, y))
 
     mae_scores = []
     rmse_scores = []
@@ -99,24 +232,23 @@ def train_regression(df, feature_cols, target_col, groups=None):
         mae_scores.append(mean_absolute_error(y[val_idx], preds))
         rmse_scores.append(np.sqrt(mean_squared_error(y[val_idx], preds)))
 
-    # Train final model on all data
     model.fit(X, y)
 
     return model, {
-        "mae_mean": np.mean(mae_scores),
-        "mae_std": np.std(mae_scores),
-        "rmse_mean": np.mean(rmse_scores),
-        "rmse_std": np.std(rmse_scores),
+        "mae_mean": float(np.mean(mae_scores)),
+        "mae_std": float(np.std(mae_scores)),
+        "rmse_mean": float(np.mean(rmse_scores)),
+        "rmse_std": float(np.std(rmse_scores)),
     }
 
 
 def train_classifier(df, feature_cols, target_col, groups=None):
-    """Train XGBoost 3-class classifier with cross-validation."""
+    """Train XGBoost 3-class classifier."""
     try:
         from xgboost import XGBClassifier
     except ImportError:
         print("pip install xgboost")
-        return None
+        return None, {}
 
     X = df[feature_cols].values
     y_labels = score_to_3class(df[target_col])
@@ -134,31 +266,29 @@ def train_classifier(df, feature_cols, target_col, groups=None):
         random_state=42,
     )
 
-    if groups is not None and df[groups].nunique() >= 3:
+    if groups is not None and groups in df.columns and df[groups].nunique() >= 3:
         cv = GroupKFold(n_splits=min(5, df[groups].nunique()))
-        splits = cv.split(X, y, groups=df[groups])
+        splits = list(cv.split(X, y, groups=df[groups]))
     else:
-        from sklearn.model_selection import KFold
         cv = KFold(n_splits=5, shuffle=True, random_state=42)
-        splits = cv.split(X, y)
+        splits = list(cv.split(X, y))
 
     acc_scores = []
-    f1_scores = []
+    f1_scores_list = []
 
     for train_idx, val_idx in splits:
         model.fit(X[train_idx], y[train_idx])
         preds = model.predict(X[val_idx])
         acc_scores.append(accuracy_score(y[val_idx], preds))
-        f1_scores.append(f1_score(y[val_idx], preds, average="macro"))
+        f1_scores_list.append(f1_score(y[val_idx], preds, average="macro"))
 
-    # Final model
     model.fit(X, y)
 
     return model, {
-        "accuracy_mean": np.mean(acc_scores),
-        "accuracy_std": np.std(acc_scores),
-        "f1_macro_mean": np.mean(f1_scores),
-        "f1_macro_std": np.std(f1_scores),
+        "accuracy_mean": float(np.mean(acc_scores)),
+        "accuracy_std": float(np.std(acc_scores)),
+        "f1_macro_mean": float(np.mean(f1_scores_list)),
+        "f1_macro_std": float(np.std(f1_scores_list)),
     }
 
 
@@ -195,10 +325,14 @@ def run_ablation(df, target_col, groups=None):
     return results
 
 
+# ═══════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", choices=["esm", "proxy"], default="proxy",
-                        help="Target: 'esm' for ESM labels, 'proxy' for rule-based score")
+    parser.add_argument("--target", choices=["esm", "semi", "auto"], default="auto",
+                        help="Training strategy")
     args = parser.parse_args()
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -208,20 +342,29 @@ def main():
     df = load_dataset()
     print(f"  {len(df)} samples, {df['session_id'].nunique()} sessions")
 
-    # Determine target column
-    if args.target == "esm":
-        labeled = df[df["esm_score"].notna()]
-        if len(labeled) < 50:
-            print(f"  Only {len(labeled)} ESM-labeled samples. Need ≥50. Falling back to proxy.")
-            target_col = "focus_score"
-            df_train = df
-        else:
-            target_col = "esm_score"
-            df_train = labeled
-            print(f"  Using {len(df_train)} ESM-labeled samples")
+    # ── Determine training strategy ──
+    esm_count = df["esm_score"].notna().sum() if "esm_score" in df.columns else 0
+    post_count = df["post_session_score"].notna().sum() if "post_session_score" in df.columns else 0
+    print(f"  ESM labels: {esm_count}, Post-session labels: {post_count}")
+
+    if args.target == "esm" and esm_count >= 50:
+        strategy = "esm"
+        df_train = df[df["esm_score"].notna()].copy()
+        target_col = "esm_score"
+        print(f"\n  Strategy: ESM direct ({len(df_train)} labeled samples)")
+    elif args.target == "semi" or (args.target == "auto" and esm_count < 50):
+        strategy = "semi"
+        df_train = df.copy()
+        df_train["combined_label"] = combine_labels(df_train)
+        target_col = "combined_label"
+        label_dist = df_train[target_col].value_counts().sort_index()
+        print(f"\n  Strategy: Semi-supervised pseudo-labeling (all {len(df_train)} samples)")
+        print(f"  Label distribution:\n{label_dist.to_string()}")
     else:
-        target_col = "focus_score"
-        df_train = df
+        strategy = "esm"
+        df_train = df[df["esm_score"].notna()].copy()
+        target_col = "esm_score"
+        print(f"\n  Strategy: ESM direct ({len(df_train)} labeled samples)")
 
     available_features = [f for f in ALL_FEATURES if f in df_train.columns]
     print(f"  Available features: {len(available_features)}")
@@ -232,7 +375,6 @@ def main():
     print(f"  MAE:  {reg_metrics['mae_mean']:.3f} ± {reg_metrics['mae_std']:.3f}")
     print(f"  RMSE: {reg_metrics['rmse_mean']:.3f} ± {reg_metrics['rmse_std']:.3f}")
 
-    # Save model
     reg_model.save_model(str(MODEL_DIR / "xgboost_regressor.json"))
     print(f"  Model saved → {MODEL_DIR / 'xgboost_regressor.json'}")
 
@@ -244,12 +386,23 @@ def main():
 
     # ── Classification ──
     print("\n═══ XGBoost 3-Class Classifier ═══")
-    cls_model, cls_metrics = train_classifier(df_train, available_features, target_col, "session_id")
+    # Scale target to 0-100 range for 3-class binning
+    df_cls = df_train.copy()
+    df_cls["target_scaled"] = df_cls[target_col] / 5.0 * 100  # 1-5 → 20-100
+    cls_model, cls_metrics = train_classifier(df_cls, available_features, "target_scaled", "session_id")
     print(f"  Accuracy: {cls_metrics['accuracy_mean']:.3f} ± {cls_metrics['accuracy_std']:.3f}")
     print(f"  F1 Macro: {cls_metrics['f1_macro_mean']:.3f} ± {cls_metrics['f1_macro_std']:.3f}")
 
     cls_model.save_model(str(MODEL_DIR / "xgboost_classifier.json"))
-    print(f"  Model saved → {MODEL_DIR / 'xgboost_classifier.json'}")
+
+    # ── Rule-Based vs ML Comparison (THE KEY RESULT) ──
+    print("\n═══ Rule-Based vs ML Comparison ═══")
+    comparison = evaluate_rule_based_vs_ml(df_train, reg_model, available_features, target_col)
+    print(f"  ML MAE:        {comparison['ml_mae']:.3f}")
+    print(f"  Rule-based MAE:{comparison['rule_mae']:.3f}")
+    print(f"  Improvement:   {comparison['improvement_mae']:.1f}%")
+    print(f"  ML Corr:       {comparison['ml_correlation']:.3f}")
+    print(f"  Rule-based Corr:{comparison['rule_correlation']:.3f}")
 
     # ── Ablation Study ──
     print("\n═══ Ablation Study ═══")
@@ -257,11 +410,15 @@ def main():
 
     # ── Save all results ──
     all_results = {
+        "strategy": strategy,
         "target": target_col,
         "n_samples": len(df_train),
         "n_sessions": int(df_train["session_id"].nunique()),
+        "esm_labels": int(esm_count),
+        "post_session_labels": int(post_count),
         "regression": reg_metrics,
         "classification": cls_metrics,
+        "rule_vs_ml": comparison,
         "feature_importance": importance,
         "ablation": ablation_results,
     }

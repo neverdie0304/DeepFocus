@@ -9,6 +9,7 @@ import SessionPage from './pages/SessionPage';
 import ReportPage from './pages/ReportPage';
 import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
+import HistoryPage from './pages/HistoryPage';
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
             <Route path="/session" element={<ProtectedRoute><SessionPage /></ProtectedRoute>} />
             <Route path="/session/:id/report" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+            <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           </Route>
         </Routes>

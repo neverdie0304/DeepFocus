@@ -30,6 +30,10 @@ export async function getWeeklyAnalytics(date) {
   return res.data;
 }
 
+export async function deleteSession(id) {
+  await api.delete(`/sessions/${id}/`);
+}
+
 export async function submitSelfReport(sessionId, data) {
   const res = await api.post(`/sessions/${sessionId}/reports/`, data);
   return res.data;

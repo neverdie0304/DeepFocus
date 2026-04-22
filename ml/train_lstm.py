@@ -25,6 +25,10 @@ RESULTS_DIR = Path(__file__).parent / "results"
 FEATURE_COLS = [
     "head_yaw", "head_pitch", "head_roll",
     "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
+    "brow_down_left", "brow_down_right", "brow_inner_up",
+    "eye_squint_left", "eye_squint_right", "eye_wide_left", "eye_wide_right",
+    "jaw_open", "mouth_frown_left", "mouth_frown_right",
+    "mouth_smile_left", "mouth_smile_right",
     "keystroke_rate", "mouse_velocity", "mouse_distance",
     "click_rate", "scroll_rate", "idle_duration", "activity_level",
     "tab_switch_count", "window_blur_count",
