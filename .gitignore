@@ -53,10 +53,17 @@ Thumbs.db
 # Assessment materials (kept locally for reference, not in repo)
 assessment-guidelines.pdf
 college-marking-framework.pdf
+Guidelines/
+
+# Thesis drafts (kept locally; final PDF submitted via KEATS, not GitHub)
+docs/thesis/
+docs/~$*.docx
+docs/~$*.md
 
 # Internal working notes (kept locally but not distributed)
 IMPLEMENTATION_ROADMAP.md
 ML_IMPLEMENTATION_PLAN.md
 REPORT_NOTES.md
+SESSION_STATE.md
 implemented_features.docx
 generate_docx.py

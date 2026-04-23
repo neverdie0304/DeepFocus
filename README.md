@@ -43,7 +43,7 @@ Developed as an MSc Individual Project at King's College London.
  │     /api/auth/*  /api/sessions/*  /api/ml/export/  /api/analytics  │
  └──────────────────────────────────────────────────────────────────┘
                                   │
-                                  ▼ (offline, for thesis evaluation)
+                                  ▼ (offline training pipeline)
  ┌──────────────────────────────────────────────────────────────────┐
  │                  ML pipeline (Python + XGBoost)                    │
  │  export_data.py → feature_engineering.py → train_xgboost.py        │
@@ -179,9 +179,8 @@ DeepFocus/
 │   ├── export_tfjs.py
 │   └── requirements.txt
 │
-└── docs/                      Documentation and thesis chapters
-    ├── ARCHITECTURE.md
-    └── thesis/                Chapters 1, 3, 6 and Literature Review
+└── docs/
+    └── ARCHITECTURE.md        Technical architecture for developers
 ```
 
 ---
@@ -197,7 +196,7 @@ DeepFocus/
 | Django, DRF, simplejwt | BSD / MIT | Backend framework and JWT auth |
 | XGBoost, pandas, scikit-learn | Apache 2.0 / BSD | ML training |
 
-See [docs/thesis/Chapter_6_Legal_Social_Ethical.md](docs/thesis/Chapter_6_Legal_Social_Ethical.md) for a full discussion of licensing, privacy, and ethics.
+All licences are mutually compatible. Attribution is preserved in the source and in this README.
 
 ---
 
@@ -209,4 +208,4 @@ DeepFocus is released under the [MIT Licence](LICENSE).
 
 ## Acknowledgements
 
-This work builds on the MediaPipe Face Landmarker model released by Google, the Django and React open-source communities, and the substantial body of literature on attention, engagement detection, and multimodal sensing cited throughout the thesis.
+This work builds on the MediaPipe Face Landmarker model released by Google, the Django and React open-source communities, and the substantial body of academic literature on attention, engagement detection, and multimodal sensing.
