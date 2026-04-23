@@ -14,24 +14,17 @@ Usage:
 
 import argparse
 import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-DATA_DIR = Path(__file__).parent / "data"
-MODEL_DIR = Path(__file__).parent / "models"
-FRONTEND_MODEL_DIR = Path(__file__).parent.parent / "frontend" / "public" / "models"
+from features import ALL_FEATURES
+from paths import (
+    DATASET_CSV, FRONTEND_MODELS_DIR, LSTM_SAVED_MODEL, MODEL_DIR,
+    XGB_STUDENT_SAVED_MODEL, XGBOOST_REGRESSOR,
+)
 
-FEATURE_COLS = [
-    "head_yaw", "head_pitch", "head_roll",
-    "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
-    "keystroke_rate", "mouse_velocity", "mouse_distance",
-    "click_rate", "scroll_rate", "idle_duration", "activity_level",
-    "tab_switch_count", "window_blur_count",
-    "time_since_tab_return", "session_elapsed_ratio",
-    "focus_ema_30s", "focus_ema_5min", "focus_trend", "distraction_burst_count",
-]
+FEATURE_COLS = ALL_FEATURES
 
 
 def distill_xgboost_to_tfjs():
@@ -47,13 +40,13 @@ def distill_xgboost_to_tfjs():
         return
 
     # Load data
-    df = pd.read_csv(DATA_DIR / "dataset.csv")
+    df = pd.read_csv(DATASET_CSV)
     available = [f for f in FEATURE_COLS if f in df.columns]
     X = df[available].values.astype(np.float32)
 
     # Generate teacher predictions
     teacher = XGBRegressor()
-    teacher.load_model(str(MODEL_DIR / "xgboost_regressor.json"))
+    teacher.load_model(str(XGBOOST_REGRESSOR))
     y_teacher = teacher.predict(X).astype(np.float32)
 
     # Build tiny student model
@@ -77,11 +70,11 @@ def distill_xgboost_to_tfjs():
     print(f"\nDistillation MAE (student vs teacher): {mae:.3f}")
 
     # Save as TF SavedModel
-    saved_path = MODEL_DIR / "xgb_student_saved_model"
+    saved_path = XGB_STUDENT_SAVED_MODEL
     student.export(str(saved_path))
 
     # Convert to TF.js
-    output_dir = FRONTEND_MODEL_DIR / "focus_model"
+    output_dir = FRONTEND_MODELS_DIR / "focus_model"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -123,13 +116,13 @@ def distill_xgboost_to_tfjs():
 
 def convert_lstm_to_tfjs():
     """Direct conversion of LSTM SavedModel to TF.js."""
-    saved_path = MODEL_DIR / "lstm_saved_model"
+    saved_path = LSTM_SAVED_MODEL
     if not saved_path.exists():
         print(f"LSTM SavedModel not found at {saved_path}")
         print("Run train_lstm.py first")
         return
 
-    output_dir = FRONTEND_MODEL_DIR / "focus_lstm_model"
+    output_dir = FRONTEND_MODELS_DIR / "focus_lstm_model"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:

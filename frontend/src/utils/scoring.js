@@ -1,42 +1,84 @@
-/* ═══════════════════════════════════════════════════
-   scoring.js
-   Focus score computation — rule-based baseline
-   + ML feature vector assembly for future model
-   ═══════════════════════════════════════════════════ */
+/**
+ * Focus score computation.
+ *
+ * Two scorers are provided:
+ *
+ * 1. ``computeFocusScore`` — a deterministic, rule-based baseline using fixed
+ *    penalty weights on four binary signals. This is the fallback scorer,
+ *    used whenever the ML model is not loaded.
+ *
+ * 2. ``computeFocusScoreML`` — delegates to the TensorFlow.js model if
+ *    loaded, otherwise derives boolean signals from the continuous feature
+ *    vector and calls the rule-based scorer.
+ *
+ * A helper, ``assembleFeatureVector``, produces the 36-key feature vector
+ * sent to the backend and fed to the model.
+ */
+import {
+  PENALTY_FACE_MISSING,
+  PENALTY_IDLE,
+  PENALTY_IDLE_CAMERA_OFF,
+  PENALTY_LOOKING_AWAY,
+  PITCH_THRESHOLD_DEG,
+  YAW_THRESHOLD_DEG,
+} from '../constants';
+import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
 
-/* ───────────────────────────────────────────────────
-   Rule-based scoring (original, kept as fallback)
-   ─────────────────────────────────────────────────── */
+/**
+ * @typedef {Object} RuleBasedInput
+ * @property {boolean} isIdle
+ * @property {boolean} isFaceMissing
+ * @property {boolean} isLookingAway
+ * @property {boolean} cameraEnabled
+ */
+
+/**
+ * Rule-based focus score in the range [0, 100].
+ *
+ * Tab-switching is deliberately excluded from the penalty set because
+ * switching between work-relevant tabs is a normal part of computer use
+ * (see thesis Chapter 3 for the full rationale). Tab counts are retained
+ * as ML features only.
+ *
+ * @param {RuleBasedInput} signals
+ * @returns {number}
+ */
 export function computeFocusScore({ isIdle, isFaceMissing, isLookingAway, cameraEnabled }) {
-  // Tab switching removed from penalty: it is a normal part of computer work,
-  // not a reliable distraction signal. Retained as ML feature only.
   if (cameraEnabled) {
     let score = 100;
-    if (isFaceMissing) score -= 50;
-    if (isLookingAway) score -= 35;
-    if (isIdle) score -= 15;
-    return Math.max(0, score);
-  } else {
-    let score = 100;
-    if (isIdle) score -= 100;
+    if (isFaceMissing) score -= PENALTY_FACE_MISSING;
+    if (isLookingAway) score -= PENALTY_LOOKING_AWAY;
+    if (isIdle) score -= PENALTY_IDLE;
     return Math.max(0, score);
   }
+
+  let score = 100;
+  if (isIdle) score -= PENALTY_IDLE_CAMERA_OFF;
+  return Math.max(0, score);
 }
 
-/* ───────────────────────────────────────────────────
-   Assemble full ML feature vector from all hooks.
-   Returns a flat object with ~25 named features,
-   ready for storage and future model inference.
-   ─────────────────────────────────────────────────── */
+/**
+ * Assemble the full ML feature vector from the four modality outputs.
+ *
+ * Result is a flat object whose keys match the backend SessionEvent model
+ * field names exactly, so the same payload can be persisted and fed to the
+ * model without translation.
+ *
+ * @param {Object} modalities
+ * @param {Object} modalities.faceFeatures - Output of useFaceDetection.
+ * @param {Object} modalities.behaviourFeatures - Output of useBehaviourSignals.
+ * @param {Object} modalities.contextFeatures - Output of useContextSignals.
+ * @param {Object} modalities.temporalFeatures - Output of useTemporalFeatures.
+ * @returns {Object} The 36-key feature vector.
+ */
 export function assembleFeatureVector({
   faceFeatures = {},
   behaviourFeatures = {},
   contextFeatures = {},
   temporalFeatures = {},
-  cameraEnabled = false,
-}) {
+} = {}) {
   return {
-    // ── Visual (Face Mesh) ──
+    // ── Visual (Face Mesh geometry) ──
     head_yaw: faceFeatures.headYaw ?? null,
     head_pitch: faceFeatures.headPitch ?? null,
     head_roll: faceFeatures.headRoll ?? null,
@@ -46,7 +88,7 @@ export function assembleFeatureVector({
     gaze_y: faceFeatures.gazeY ?? null,
     face_confidence: faceFeatures.faceConfidence ?? null,
 
-    // ── Blendshapes (engagement-relevant) ──
+    // ── Visual (blendshapes) ──
     brow_down_left: faceFeatures.browDownLeft ?? 0,
     brow_down_right: faceFeatures.browDownRight ?? 0,
     brow_inner_up: faceFeatures.browInnerUp ?? 0,
@@ -60,7 +102,7 @@ export function assembleFeatureVector({
     mouth_smile_left: faceFeatures.mouthSmileLeft ?? 0,
     mouth_smile_right: faceFeatures.mouthSmileRight ?? 0,
 
-    // ── Behavioral ──
+    // ── Behavioural ──
     keystroke_rate: behaviourFeatures.keystrokeRate ?? 0,
     mouse_velocity: behaviourFeatures.mouseVelocity ?? 0,
     mouse_distance: behaviourFeatures.mouseDistance ?? 0,
@@ -83,34 +125,42 @@ export function assembleFeatureVector({
   };
 }
 
-/* ───────────────────────────────────────────────────
-   ML-based scoring.
-   Attempts TF.js model inference; falls back to
-   rule-based if model is not loaded.
-   ─────────────────────────────────────────────────── */
-import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
-
+/**
+ * ML-based focus score in [0, 100].
+ *
+ * Tries the loaded TensorFlow.js model first; if unavailable or prediction
+ * fails, derives rule-based booleans from the feature vector and delegates
+ * to ``computeFocusScore``.
+ *
+ * @param {Object} featureVector - Output of ``assembleFeatureVector``.
+ * @param {Object} [scalerParams] - Z-score normalisation parameters from training.
+ * @returns {Promise<number>}
+ */
 export async function computeFocusScoreML(featureVector, scalerParams = null) {
-  // Try ML model first
   if (isModelLoaded()) {
     const mlScore = await predictFocusScore(featureVector, scalerParams);
     if (mlScore !== null) return mlScore;
   }
 
-  // Fallback: derive booleans from continuous features
-  const isFaceMissing = featureVector.face_confidence === 0 || featureVector.face_confidence === null;
+  // Fallback: derive booleans from continuous features.
+  const isFaceMissing =
+    featureVector.face_confidence === 0 || featureVector.face_confidence === null;
   const isLookingAway =
-    featureVector.head_yaw !== null &&
-    (Math.abs(featureVector.head_yaw) > 25 || Math.abs(featureVector.head_pitch) > 20);
+    featureVector.head_yaw !== null
+    && (Math.abs(featureVector.head_yaw) > YAW_THRESHOLD_DEG
+      || Math.abs(featureVector.head_pitch) > PITCH_THRESHOLD_DEG);
   const isIdle = featureVector.idle_duration > 15;
   const cameraEnabled = featureVector.face_confidence !== null;
 
   return computeFocusScore({ isIdle, isFaceMissing, isLookingAway, cameraEnabled });
 }
 
-/* ───────────────────────────────────────────────────
-   Time formatting utility
-   ─────────────────────────────────────────────────── */
+/**
+ * Format a duration in seconds as ``MM:SS`` or ``H:MM:SS``.
+ *
+ * @param {number} seconds
+ * @returns {string}
+ */
 export function formatTime(seconds) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);

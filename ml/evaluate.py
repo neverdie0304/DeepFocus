@@ -13,24 +13,16 @@ Usage:
 """
 
 import json
-from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-DATA_DIR = Path(__file__).parent / "data"
-MODEL_DIR = Path(__file__).parent / "models"
-RESULTS_DIR = Path(__file__).parent / "results"
+from features import ALL_FEATURES, BEHAVIORAL, CONTEXTUAL, TEMPORAL, VISUAL
+from paths import (
+    DATASET_CSV, LSTM_RESULTS_JSON, RESULTS_DIR,
+    XGBOOST_REGRESSOR, XGBOOST_RESULTS_JSON, ensure_dirs,
+)
 
-FEATURE_COLS = [
-    "head_yaw", "head_pitch", "head_roll",
-    "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
-    "keystroke_rate", "mouse_velocity", "mouse_distance",
-    "click_rate", "scroll_rate", "idle_duration", "activity_level",
-    "tab_switch_count", "window_blur_count",
-    "time_since_tab_return", "session_elapsed_ratio",
-    "focus_ema_30s", "focus_ema_5min", "focus_trend", "distraction_burst_count",
-]
+FEATURE_COLS = ALL_FEATURES
 
 
 def plot_feature_importance(results_path, output_path):
@@ -55,19 +47,25 @@ def plot_feature_importance(results_path, output_path):
     values = [item[1] for item in items]
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    colors = []
-    for name in names:
-        if name in ["head_yaw", "head_pitch", "head_roll", "ear_left", "ear_right",
-                     "gaze_x", "gaze_y", "face_confidence"]:
-            colors.append("#6366f1")  # indigo for visual
-        elif name in ["keystroke_rate", "mouse_velocity", "mouse_distance",
-                       "click_rate", "scroll_rate", "idle_duration", "activity_level"]:
-            colors.append("#22c55e")  # green for behavioral
-        elif name in ["tab_switch_count", "window_blur_count",
-                       "time_since_tab_return", "session_elapsed_ratio"]:
-            colors.append("#eab308")  # yellow for contextual
-        else:
-            colors.append("#ef4444")  # red for temporal
+    modality_colors = {
+        "visual": "#6366f1",       # indigo
+        "behavioral": "#22c55e",   # green
+        "contextual": "#eab308",   # yellow
+        "temporal": "#ef4444",     # red
+    }
+
+    def _modality(name):
+        if name in VISUAL:
+            return "visual"
+        if name in BEHAVIORAL:
+            return "behavioral"
+        if name in CONTEXTUAL:
+            return "contextual"
+        if name in TEMPORAL:
+            return "temporal"
+        return "temporal"  # safe default
+
+    colors = [modality_colors[_modality(n)] for n in names]
 
     ax.barh(range(len(names)), values, color=colors)
     ax.set_yticks(range(len(names)))
@@ -139,16 +137,15 @@ def plot_rule_vs_ml(output_path):
         print("pip install matplotlib xgboost")
         return
 
-    df = pd.read_csv(DATA_DIR / "dataset.csv")
+    df = pd.read_csv(DATASET_CSV)
     available = [f for f in FEATURE_COLS if f in df.columns]
 
     model = XGBRegressor()
-    model_path = MODEL_DIR / "xgboost_regressor.json"
-    if not model_path.exists():
+    if not XGBOOST_REGRESSOR.exists():
         print("Train XGBoost first")
         return
 
-    model.load_model(str(model_path))
+    model.load_model(str(XGBOOST_REGRESSOR))
 
     X = df[available].values
     ml_preds = model.predict(X)
@@ -177,9 +174,8 @@ def generate_comparison_table(output_path):
             "|-------|-----|------|-------------|----------|"]
 
     # XGBoost
-    xgb_path = RESULTS_DIR / "xgboost_results.json"
-    if xgb_path.exists():
-        with open(xgb_path) as f:
+    if XGBOOST_RESULTS_JSON.exists():
+        with open(XGBOOST_RESULTS_JSON) as f:
             xgb = json.load(f)
         reg = xgb.get("regression", {})
         cls = xgb.get("classification", {})
@@ -190,9 +186,8 @@ def generate_comparison_table(output_path):
         )
 
     # LSTM
-    lstm_path = RESULTS_DIR / "lstm_results.json"
-    if lstm_path.exists():
-        with open(lstm_path) as f:
+    if LSTM_RESULTS_JSON.exists():
+        with open(LSTM_RESULTS_JSON) as f:
             lstm = json.load(f)
         rows.append(
             f"| LSTM | {lstm.get('val_mae', '-'):.2f} | "
@@ -212,18 +207,18 @@ def generate_comparison_table(output_path):
 
 
 def main():
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_dirs()
 
-    xgb_results_path = RESULTS_DIR / "xgboost_results.json"
-
-    if xgb_results_path.exists():
+    if XGBOOST_RESULTS_JSON.exists():
         print("═══ Generating Feature Importance Plot ═══")
-        plot_feature_importance(xgb_results_path, RESULTS_DIR / "feature_importance.png")
+        plot_feature_importance(
+            XGBOOST_RESULTS_JSON, RESULTS_DIR / "feature_importance.png",
+        )
 
         print("\n═══ Generating Ablation Chart ═══")
-        plot_ablation(xgb_results_path, RESULTS_DIR / "ablation_study.png")
+        plot_ablation(XGBOOST_RESULTS_JSON, RESULTS_DIR / "ablation_study.png")
 
-    if (DATA_DIR / "dataset.csv").exists():
+    if DATASET_CSV.exists():
         print("\n═══ Generating Rule-Based vs ML Plot ═══")
         plot_rule_vs_ml(RESULTS_DIR / "rule_vs_ml.png")
 

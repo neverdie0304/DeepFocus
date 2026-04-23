@@ -9,86 +9,57 @@ Usage:
 
 import argparse
 import csv
-import json
-import os
 import sqlite3
 import sys
-from pathlib import Path
 
-OUTPUT_DIR = Path(__file__).parent / "data"
+from features import ALL_FEATURES, LEGACY_BOOLEANS
+from paths import EVENTS_CSV, SELF_REPORTS_CSV, ensure_dirs
 
-
-# ── ML feature columns (must match SessionEvent model) ──
-ML_FEATURE_COLS = [
-    "head_yaw", "head_pitch", "head_roll",
-    "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
-    "keystroke_rate", "mouse_velocity", "mouse_distance",
-    "click_rate", "scroll_rate", "idle_duration", "activity_level",
-    "tab_switch_count", "window_blur_count",
-    "time_since_tab_return", "session_elapsed_ratio",
-    "focus_ema_30s", "focus_ema_5min", "focus_trend", "distraction_burst_count",
-]
-
-LEGACY_BOOL_COLS = ["is_tab_hidden", "is_idle", "is_face_missing", "is_looking_away"]
-
-EVENT_COLS = ["session_id", "timestamp", "focus_score"] + LEGACY_BOOL_COLS + ML_FEATURE_COLS
-
+# Shape of each exported row. The first three columns are session metadata
+# that are not themselves features but are needed to reconstruct the dataset.
+EVENT_COLS = ["session_id", "timestamp", "focus_score"] + LEGACY_BOOLEANS + ALL_FEATURES
 REPORT_COLS = ["session_id", "timestamp", "report_type", "score"]
 
 
 def export_from_sqlite(db_path: str):
-    """Read events and self-reports directly from SQLite."""
+    """Read events and self-reports directly from a SQLite database file."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    ensure_dirs()
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Events
-    cur = conn.execute("""
-        SELECT session_id, timestamp, focus_score,
-               is_tab_hidden, is_idle, is_face_missing, is_looking_away,
-               head_yaw, head_pitch, head_roll,
-               ear_left, ear_right, gaze_x, gaze_y, face_confidence,
-               keystroke_rate, mouse_velocity, mouse_distance,
-               click_rate, scroll_rate, idle_duration, activity_level,
-               tab_switch_count, window_blur_count,
-               time_since_tab_return, session_elapsed_ratio,
-               focus_ema_30s, focus_ema_5min, focus_trend, distraction_burst_count
-        FROM api_sessionevent
-        ORDER BY timestamp
-    """)
+    # Events.
+    columns_sql = ", ".join(EVENT_COLS)
+    cur = conn.execute(
+        f"SELECT {columns_sql} FROM api_sessionevent ORDER BY timestamp",
+    )
     rows = cur.fetchall()
 
-    events_path = OUTPUT_DIR / "events.csv"
-    with open(events_path, "w", newline="") as f:
+    with open(EVENTS_CSV, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(EVENT_COLS)
         for row in rows:
             writer.writerow([row[col] for col in EVENT_COLS])
+    print(f"Exported {len(rows)} events → {EVENTS_CSV}")
 
-    print(f"Exported {len(rows)} events → {events_path}")
-
-    # Self-reports
-    cur = conn.execute("""
-        SELECT session_id, timestamp, report_type, score
-        FROM api_selfreport
-        ORDER BY timestamp
-    """)
+    # Self-reports.
+    cur = conn.execute(
+        "SELECT session_id, timestamp, report_type, score "
+        "FROM api_selfreport ORDER BY timestamp",
+    )
     rows = cur.fetchall()
 
-    reports_path = OUTPUT_DIR / "self_reports.csv"
-    with open(reports_path, "w", newline="") as f:
+    with open(SELF_REPORTS_CSV, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(REPORT_COLS)
         for row in rows:
             writer.writerow([row[col] for col in REPORT_COLS])
+    print(f"Exported {len(rows)} self-reports → {SELF_REPORTS_CSV}")
 
-    print(f"Exported {len(rows)} self-reports → {reports_path}")
     conn.close()
 
 
 def export_from_api(base_url: str, token: str):
-    """Fetch via REST API (for production use)."""
+    """Fetch the events export via the authenticated REST API."""
     try:
         import requests
     except ImportError:
@@ -96,22 +67,20 @@ def export_from_api(base_url: str, token: str):
         sys.exit(1)
 
     headers = {"Authorization": f"Bearer {token}"}
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_dirs()
 
-    # Events (JSON format)
     resp = requests.get(f"{base_url}/ml/export/?format=json", headers=headers)
     resp.raise_for_status()
     events = resp.json()
 
-    events_path = OUTPUT_DIR / "events.csv"
     if events:
-        with open(events_path, "w", newline="") as f:
+        with open(EVENTS_CSV, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=EVENT_COLS)
             writer.writeheader()
             for e in events:
                 writer.writerow({col: e.get(col) for col in EVENT_COLS})
 
-    print(f"Exported {len(events)} events → {events_path}")
+    print(f"Exported {len(events)} events → {EVENTS_CSV}")
 
 
 if __name__ == "__main__":

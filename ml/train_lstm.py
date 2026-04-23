@@ -11,30 +11,16 @@ Usage:
 import argparse
 import json
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from features import ALL_FEATURES
+from paths import DATASET_CSV, LSTM_MODEL, LSTM_RESULTS_JSON, LSTM_SAVED_MODEL, ensure_dirs
+
 warnings.filterwarnings("ignore")
 
-DATA_DIR = Path(__file__).parent / "data"
-MODEL_DIR = Path(__file__).parent / "models"
-RESULTS_DIR = Path(__file__).parent / "results"
-
-FEATURE_COLS = [
-    "head_yaw", "head_pitch", "head_roll",
-    "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
-    "brow_down_left", "brow_down_right", "brow_inner_up",
-    "eye_squint_left", "eye_squint_right", "eye_wide_left", "eye_wide_right",
-    "jaw_open", "mouth_frown_left", "mouth_frown_right",
-    "mouth_smile_left", "mouth_smile_right",
-    "keystroke_rate", "mouse_velocity", "mouse_distance",
-    "click_rate", "scroll_rate", "idle_duration", "activity_level",
-    "tab_switch_count", "window_blur_count",
-    "time_since_tab_return", "session_elapsed_ratio",
-    "focus_ema_30s", "focus_ema_5min", "focus_trend", "distraction_burst_count",
-]
+FEATURE_COLS = ALL_FEATURES
 
 
 def create_sequences(df, seq_len, target_col="focus_score"):
@@ -98,11 +84,10 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()
 
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_dirs()
 
     print("Loading dataset...")
-    df = pd.read_csv(DATA_DIR / "dataset.csv")
+    df = pd.read_csv(DATASET_CSV)
     print(f"  {len(df)} samples, {df['session_id'].nunique()} sessions")
 
     print(f"Creating sequences (window={args.seq_len} × 2s = {args.seq_len * 2}s)...")
@@ -162,15 +147,13 @@ def main():
     print(f"  Val MAE:  {mae:.3f}")
     print(f"  Val RMSE: {rmse:.3f}")
 
-    # Save model
-    model_path = MODEL_DIR / "lstm_model.keras"
-    model.save(str(model_path))
-    print(f"  Model saved → {model_path}")
+    # Save model for later loading.
+    model.save(str(LSTM_MODEL))
+    print(f"  Model saved → {LSTM_MODEL}")
 
-    # Also save as TF SavedModel for TF.js conversion
-    saved_model_path = MODEL_DIR / "lstm_saved_model"
-    model.export(str(saved_model_path))
-    print(f"  SavedModel → {saved_model_path}")
+    # Also save as TF SavedModel for TF.js conversion.
+    model.export(str(LSTM_SAVED_MODEL))
+    print(f"  SavedModel → {LSTM_SAVED_MODEL}")
 
     # Save results
     results = {
@@ -185,9 +168,9 @@ def main():
         "train_mae_final": float(history.history["mae"][-1]),
     }
 
-    with open(RESULTS_DIR / "lstm_results.json", "w") as f:
+    with open(LSTM_RESULTS_JSON, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"  Results saved → {RESULTS_DIR / 'lstm_results.json'}")
+    print(f"  Results saved → {LSTM_RESULTS_JSON}")
 
 
 if __name__ == "__main__":

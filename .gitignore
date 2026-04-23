@@ -9,6 +9,10 @@ backend_venv/
 *.sqlite3
 db.sqlite3
 
+# Django
+backend/staticfiles/
+backend/media/
+
 # Environment
 .env
 .env.local
@@ -18,6 +22,20 @@ db.sqlite3
 node_modules/
 frontend/dist/
 frontend/build/
+
+# Testing
+coverage/
+htmlcov/
+.coverage
+.pytest_cache/
+frontend/test-results/
+frontend/playwright-report/
+frontend/playwright/.cache/
+
+# ML artefacts (local outputs)
+ml/data/
+ml/models/
+ml/results/
 
 # IDE
 .vscode/
@@ -31,3 +49,14 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Assessment materials (kept locally for reference, not in repo)
+assessment-guidelines.pdf
+college-marking-framework.pdf
+
+# Internal working notes (kept locally but not distributed)
+IMPLEMENTATION_ROADMAP.md
+ML_IMPLEMENTATION_PLAN.md
+REPORT_NOTES.md
+implemented_features.docx
+generate_docx.py

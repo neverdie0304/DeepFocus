@@ -1,56 +1,75 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import useTimer from './useTimer';
+/**
+ * useSession
+ *
+ * Orchestrates the full focus-session lifecycle in the browser:
+ *
+ *   - starts a session on the backend and captures the initial task metadata
+ *   - samples all four modalities every ``SAMPLE_INTERVAL_MS`` and emits an
+ *     event with the rule-based focus score and the full feature vector
+ *   - periodically flushes buffered events to the backend
+ *     (every ``PERIODIC_UPLOAD_INTERVAL_MS``) so a browser crash does not
+ *     lose all the session's data
+ *   - pauses/resumes the timer on user request
+ *   - finalises the session on end (uploads remaining events, writes
+ *     totals) and returns its id so the caller can navigate to the report
+ *
+ * Designed as a single orchestration layer so that the UI component
+ * (``SessionPage``) can remain purely presentational.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { createSession, updateSession, uploadEvents } from '../api/sessions';
+import { PERIODIC_UPLOAD_INTERVAL_MS, SAMPLE_INTERVAL_MS } from '../constants';
+import { assembleFeatureVector, computeFocusScore } from '../utils/scoring';
 import useBehaviourSignals from './useBehaviourSignals';
 import useContextSignals from './useContextSignals';
 import useTemporalFeatures from './useTemporalFeatures';
-import { computeFocusScore, assembleFeatureVector } from '../utils/scoring';
-import { createSession, updateSession, uploadEvents } from '../api/sessions';
+import useTimer from './useTimer';
 
-const PERIODIC_UPLOAD_INTERVAL = 30000; // 30s — flush buffered events to server
+const INITIAL_TOTALS = { idle: 0, tabHidden: 0, faceMissing: 0, lookingAway: 0 };
 
 export default function useSession() {
   const timer = useTimer();
   const [sessionId, setSessionId] = useState(null);
-  const [cameraEnabled, setCameraEnabled] = useState(true); // default ON
+  const [cameraEnabled, setCameraEnabled] = useState(true);
   const [taskType, setTaskType] = useState('other');
   const [events, setEvents] = useState([]);
   const [currentScore, setCurrentScore] = useState(100);
   const [ending, setEnding] = useState(false);
 
-  /* ── Face signals come from SessionPage via setter (same pattern as before) ── */
+  // Face features are produced in SessionPage (from useFaceDetection) and
+  // passed in via setFaceFeatures — this hook is vision-agnostic.
   const [faceFeatures, setFaceFeatures] = useState({});
 
   const isRunning = timer.status === 'running';
 
-  /* ── All hooks ── */
   const signals = useBehaviourSignals(isRunning);
   const contextSignals = useContextSignals(isRunning, timer.elapsed);
   const temporal = useTemporalFeatures(currentScore, isRunning);
 
-  // Totals tracked in ref to avoid re-renders every 2s
-  const totals = useRef({ idle: 0, tabHidden: 0, faceMissing: 0, lookingAway: 0 });
+  // Totals tracked via ref to avoid re-rendering on every sample.
+  const totals = useRef({ ...INITIAL_TOTALS });
   const samplingRef = useRef(null);
   const startTimeRef = useRef(null);
 
-  // Periodic upload refs
-  const uploadedCountRef = useRef(0); // how many events already uploaded
+  // Periodic upload bookkeeping.
+  const uploadedCountRef = useRef(0);
   const periodicUploadRef = useRef(null);
-  const sessionIdRef = useRef(null); // needed inside interval
-  const eventsRef = useRef([]);      // latest events for interval closure
+  const sessionIdRef = useRef(null);
+  const eventsRef = useRef([]);
 
-  // Keep refs in sync
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { eventsRef.current = events; }, [events]);
 
-  // Backward-compatible derived booleans from face features
+  // Backward-compatible derived booleans.
   const isFaceMissing = !faceFeatures.facePresent;
   const isLookingAway = faceFeatures.lookingAway || false;
 
-  // Sample every 2 seconds while running
+  // ── Main sampling loop (every 2 seconds while running). ──
   useEffect(() => {
     if (!isRunning) {
       if (samplingRef.current) clearInterval(samplingRef.current);
-      return;
+      return undefined;
     }
 
     samplingRef.current = setInterval(() => {
@@ -62,20 +81,20 @@ export default function useSession() {
         isLookingAway,
         cameraEnabled,
       });
-
       setCurrentScore(score);
 
-      if (isIdle) totals.current.idle += 2;
-      if (isTabHidden) totals.current.tabHidden += 2;
-      if (isFaceMissing && cameraEnabled) totals.current.faceMissing += 2;
-      if (isLookingAway && cameraEnabled) totals.current.lookingAway += 2;
+      // Accumulate cumulative distraction time (seconds) per category.
+      const interval = SAMPLE_INTERVAL_MS / 1000;
+      if (isIdle) totals.current.idle += interval;
+      if (isTabHidden) totals.current.tabHidden += interval;
+      if (isFaceMissing && cameraEnabled) totals.current.faceMissing += interval;
+      if (isLookingAway && cameraEnabled) totals.current.lookingAway += interval;
 
       const mlFeatures = assembleFeatureVector({
         faceFeatures,
         behaviourFeatures: signals,
         contextFeatures: contextSignals,
         temporalFeatures: temporal,
-        cameraEnabled,
       });
 
       setEvents((prev) => [
@@ -90,18 +109,27 @@ export default function useSession() {
           ...mlFeatures,
         },
       ]);
-    }, 2000);
+    }, SAMPLE_INTERVAL_MS);
 
     return () => {
       if (samplingRef.current) clearInterval(samplingRef.current);
     };
-  }, [isRunning, signals, faceFeatures, isFaceMissing, isLookingAway, cameraEnabled, contextSignals, temporal]);
+  }, [
+    isRunning,
+    signals,
+    faceFeatures,
+    isFaceMissing,
+    isLookingAway,
+    cameraEnabled,
+    contextSignals,
+    temporal,
+  ]);
 
-  /* ── Periodic event upload (every 30s) ── */
+  // ── Periodic upload loop (every 30s while running). ──
   useEffect(() => {
     if (!isRunning) {
       if (periodicUploadRef.current) clearInterval(periodicUploadRef.current);
-      return;
+      return undefined;
     }
 
     periodicUploadRef.current = setInterval(async () => {
@@ -114,9 +142,10 @@ export default function useSession() {
         await uploadEvents(sid, pending);
         uploadedCountRef.current = allEvents.length;
       } catch (err) {
+        // Non-fatal: will be retried on the next flush or on session end.
         console.error('Periodic upload failed (will retry):', err);
       }
-    }, PERIODIC_UPLOAD_INTERVAL);
+    }, PERIODIC_UPLOAD_INTERVAL_MS);
 
     return () => {
       if (periodicUploadRef.current) clearInterval(periodicUploadRef.current);
@@ -126,7 +155,7 @@ export default function useSession() {
   const startSession = useCallback(async () => {
     const now = new Date().toISOString();
     startTimeRef.current = now;
-    totals.current = { idle: 0, tabHidden: 0, faceMissing: 0, lookingAway: 0 };
+    totals.current = { ...INITIAL_TOTALS };
     setEvents([]);
     setCurrentScore(100);
     uploadedCountRef.current = 0;
@@ -153,7 +182,7 @@ export default function useSession() {
       : 0;
 
     try {
-      // Upload any remaining unsent events
+      // Flush any events still buffered locally.
       const pending = events.slice(uploadedCountRef.current);
       if (pending.length > 0) {
         try {
@@ -197,6 +226,7 @@ export default function useSession() {
     setTaskType,
     faceFeatures,
     setFaceFeatures,
+    // Backward-compatible derived booleans.
     cameraSignals: { isFaceMissing, isLookingAway },
     events,
     ending,

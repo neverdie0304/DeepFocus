@@ -1,60 +1,69 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+/**
+ * useBehaviourSignals
+ *
+ * Aggregates user input events (keyboard, mouse, scroll, touch) into
+ * continuous behavioural features over a 30-second sliding window. Exposes
+ * both the new continuous features (keystroke_rate, mouse_velocity, etc.)
+ * and the legacy boolean flags (``isTabHidden``, ``isIdle``) that the rest
+ * of the system still consumes.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-const IDLE_TIMEOUT = 15000; // 15 seconds
-const WINDOW_SIZE = 30;     // 30-second sliding window (sampled every 2s → 15 slots)
-const SAMPLE_INTERVAL = 2000;
+import {
+  BEHAVIOUR_WINDOW_SECONDS,
+  IDLE_TIMEOUT_MS,
+  SAMPLE_INTERVAL_MS,
+} from '../constants';
+import {
+  createRingBuffer,
+  pushRing,
+  sumRing,
+} from '../utils/features/ringBuffer';
 
-/* ───────────────────────────────────────────────────
-   Circular buffer for sliding-window aggregation
-   ─────────────────────────────────────────────────── */
-function createRingBuffer(size) {
-  return { data: new Float64Array(size), idx: 0, count: 0 };
-}
+// Slots = window_seconds / sample_interval_seconds.
+const RING_SLOTS = Math.ceil(BEHAVIOUR_WINDOW_SECONDS / (SAMPLE_INTERVAL_MS / 1000));
 
-function pushRing(buf, value) {
-  buf.data[buf.idx] = value;
-  buf.idx = (buf.idx + 1) % buf.data.length;
-  if (buf.count < buf.data.length) buf.count += 1;
-}
+/**
+ * @typedef {Object} BehaviourSignals
+ * @property {boolean} isTabHidden
+ * @property {boolean} isIdle
+ * @property {number} activityCount - Activity events in the last sample.
+ * @property {number} keystrokeRate - Keys per second over the sliding window.
+ * @property {number} mouseVelocity - Pixels per second over the sliding window.
+ * @property {number} mouseDistance - Total pixels travelled in the window.
+ * @property {number} clickRate - Clicks per second.
+ * @property {number} scrollRate - Scroll events per second.
+ * @property {number} idleDuration - Continuous seconds since last input.
+ * @property {number} activityLevel - Normalised 0-1 composite.
+ */
 
-function sumRing(buf) {
-  let s = 0;
-  const n = buf.count;
-  for (let i = 0; i < n; i++) s += buf.data[i];
-  return s;
-}
-
-function meanRing(buf) {
-  return buf.count > 0 ? sumRing(buf) / buf.count : 0;
-}
-
-/* ═══════════════════════════════════════════════════
-   Hook: useBehaviourSignals
-   Expanded to output continuous behavioral features
-   ═══════════════════════════════════════════════════ */
+/**
+ * @param {boolean} active - Whether a session is running. When false the hook
+ *   unsubscribes from global input events.
+ * @returns {BehaviourSignals}
+ */
 export default function useBehaviourSignals(active = false) {
-  /* ── Backward-compatible state ── */
+  // Backward-compatible boolean state.
   const [isTabHidden, setIsTabHidden] = useState(false);
   const [isIdle, setIsIdle] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
 
-  /* ── New continuous features ── */
+  // Continuous feature state.
   const [features, setFeatures] = useState({
-    keystrokeRate: 0,    // keys/sec (30s window)
-    mouseVelocity: 0,    // px/sec  (30s window)
-    mouseDistance: 0,     // total px (30s window)
-    clickRate: 0,         // clicks/sec (30s window)
-    scrollRate: 0,        // events/sec (30s window)
-    idleDuration: 0,      // seconds since last activity
-    activityLevel: 0,     // 0-1 normalised composite
+    keystrokeRate: 0,
+    mouseVelocity: 0,
+    mouseDistance: 0,
+    clickRate: 0,
+    scrollRate: 0,
+    idleDuration: 0,
+    activityLevel: 0,
   });
 
-  /* ── Refs for real-time counters ── */
+  // Refs for real-time counters (avoid re-renders on every event).
   const idleTimerRef = useRef(null);
   const activityRef = useRef(0);
   const intervalRef = useRef(null);
 
-  // Per-sample counters (reset every 2s)
   const keysRef = useRef(0);
   const clicksRef = useRef(0);
   const scrollsRef = useRef(0);
@@ -62,20 +71,18 @@ export default function useBehaviourSignals(active = false) {
   const lastMouseRef = useRef({ x: 0, y: 0, init: false });
   const lastActivityTimeRef = useRef(Date.now());
 
-  // Sliding-window ring buffers (one slot per 2s sample = 15 slots for 30s)
-  const slots = Math.ceil(WINDOW_SIZE / (SAMPLE_INTERVAL / 1000));
-  const keysBuf = useRef(createRingBuffer(slots));
-  const clicksBuf = useRef(createRingBuffer(slots));
-  const scrollsBuf = useRef(createRingBuffer(slots));
-  const mouseDistBuf = useRef(createRingBuffer(slots));
+  // Sliding-window buffers.
+  const keysBuf = useRef(createRingBuffer(RING_SLOTS));
+  const clicksBuf = useRef(createRingBuffer(RING_SLOTS));
+  const scrollsBuf = useRef(createRingBuffer(RING_SLOTS));
+  const mouseDistBuf = useRef(createRingBuffer(RING_SLOTS));
 
-  /* ── Event handlers ── */
   const resetIdleTimer = useCallback(() => {
     setIsIdle(false);
     activityRef.current += 1;
     lastActivityTimeRef.current = Date.now();
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    idleTimerRef.current = setTimeout(() => setIsIdle(true), IDLE_TIMEOUT);
+    idleTimerRef.current = setTimeout(() => setIsIdle(true), IDLE_TIMEOUT_MS);
   }, []);
 
   const handleKeydown = useCallback(() => {
@@ -109,54 +116,52 @@ export default function useBehaviourSignals(active = false) {
   }, [resetIdleTimer]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active) return undefined;
 
-    // Visibility
     const handleVisibility = () => setIsTabHidden(document.hidden);
     document.addEventListener('visibilitychange', handleVisibility);
 
-    // Input events
     window.addEventListener('keydown', handleKeydown, { passive: true });
     window.addEventListener('click', handleClick, { passive: true });
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('mousemove', handleMousemove, { passive: true });
     window.addEventListener('touchstart', handleTouchstart, { passive: true });
 
-    // Start idle timer
-    idleTimerRef.current = setTimeout(() => setIsIdle(true), IDLE_TIMEOUT);
+    idleTimerRef.current = setTimeout(() => setIsIdle(true), IDLE_TIMEOUT_MS);
     lastActivityTimeRef.current = Date.now();
 
-    // Sample every 2 seconds
     intervalRef.current = setInterval(() => {
-      // Read and reset per-sample counters
+      // Read and reset per-sample counters.
       const keys = keysRef.current; keysRef.current = 0;
       const clicks = clicksRef.current; clicksRef.current = 0;
       const scrolls = scrollsRef.current; scrollsRef.current = 0;
       const mouseDist = mouseDistRef.current; mouseDistRef.current = 0;
 
-      // Push into ring buffers
       pushRing(keysBuf.current, keys);
       pushRing(clicksBuf.current, clicks);
       pushRing(scrollsBuf.current, scrolls);
       pushRing(mouseDistBuf.current, mouseDist);
 
-      // Compute windowed features
-      const windowSec = (keysBuf.current.count * SAMPLE_INTERVAL) / 1000;
-      const safeDiv = windowSec > 0 ? windowSec : 1;
+      // Compute windowed rates. Safe divisor to avoid 0/0 at startup.
+      const windowSec = Math.max(
+        1,
+        (keysBuf.current.count * SAMPLE_INTERVAL_MS) / 1000,
+      );
 
-      const keystrokeRate = sumRing(keysBuf.current) / safeDiv;
+      const keystrokeRate = sumRing(keysBuf.current) / windowSec;
       const totalMouseDist = sumRing(mouseDistBuf.current);
-      const mouseVelocity = totalMouseDist / safeDiv;
-      const clickRate = sumRing(clicksBuf.current) / safeDiv;
-      const scrollRate = sumRing(scrollsBuf.current) / safeDiv;
+      const mouseVelocity = totalMouseDist / windowSec;
+      const clickRate = sumRing(clicksBuf.current) / windowSec;
+      const scrollRate = sumRing(scrollsBuf.current) / windowSec;
       const idleDuration = (Date.now() - lastActivityTimeRef.current) / 1000;
 
-      // Normalised activity level: simple composite (0-1)
-      // Heuristic: any non-zero input → some activity
-      const rawActivity = Math.min(keys + clicks + scrolls + (mouseDist > 10 ? 1 : 0), 20);
+      // Normalised composite: rough heuristic; any meaningful input → ~1.
+      const rawActivity = Math.min(
+        keys + clicks + scrolls + (mouseDist > 10 ? 1 : 0),
+        20,
+      );
       const activityLevel = rawActivity / 20;
 
-      // Backward compat
       setActivityCount(activityRef.current);
       activityRef.current = 0;
 
@@ -169,7 +174,7 @@ export default function useBehaviourSignals(active = false) {
         idleDuration: Math.round(idleDuration * 10) / 10,
         activityLevel: Math.round(activityLevel * 100) / 100,
       });
-    }, SAMPLE_INTERVAL);
+    }, SAMPLE_INTERVAL_MS);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -181,7 +186,15 @@ export default function useBehaviourSignals(active = false) {
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [active, handleKeydown, handleClick, handleScroll, handleMousemove, handleTouchstart, resetIdleTimer]);
+  }, [
+    active,
+    handleKeydown,
+    handleClick,
+    handleScroll,
+    handleMousemove,
+    handleTouchstart,
+    resetIdleTimer,
+  ]);
 
   return { isTabHidden, isIdle, activityCount, ...features };
 }

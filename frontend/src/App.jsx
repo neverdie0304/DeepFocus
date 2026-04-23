@@ -1,35 +1,42 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+
+import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider } from './context/AuthContext';
+
+import DashboardPage from './pages/DashboardPage';
+import HistoryPage from './pages/HistoryPage';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
-import SessionPage from './pages/SessionPage';
 import ReportPage from './pages/ReportPage';
-import DashboardPage from './pages/DashboardPage';
+import SessionPage from './pages/SessionPage';
 import SettingsPage from './pages/SettingsPage';
-import HistoryPage from './pages/HistoryPage';
+import SignupPage from './pages/SignupPage';
 
-function App() {
+const Protected = ({ children }) => (
+  <ProtectedRoute>{children}</ProtectedRoute>
+);
+
+export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-            <Route path="/session" element={<ProtectedRoute><SessionPage /></ProtectedRoute>} />
-            <Route path="/session/:id/report" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
-            <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-            <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
-          </Route>
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignupPage />} />
+              <Route path="/session" element={<Protected><SessionPage /></Protected>} />
+              <Route path="/session/:id/report" element={<Protected><ReportPage /></Protected>} />
+              <Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
+              <Route path="/history" element={<Protected><HistoryPage /></Protected>} />
+              <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }
-
-export default App;

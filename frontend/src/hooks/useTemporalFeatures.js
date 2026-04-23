@@ -1,29 +1,53 @@
-import { useState, useEffect, useRef } from 'react';
+/**
+ * useTemporalFeatures
+ *
+ * Derives temporal features — short- and medium-term EMAs, linear-regression
+ * trend, and distraction-burst counts — from the stream of focus scores.
+ *
+ * These features give the ML model access to short-term context without
+ * requiring a recurrent architecture.
+ */
+import { useEffect, useRef, useState } from 'react';
 
-const SAMPLE_INTERVAL = 2000;
-const FIVE_MIN_SLOTS = Math.ceil((5 * 60) / (SAMPLE_INTERVAL / 1000)); // 150 slots
+import {
+  DISTRACTION_THRESHOLD,
+  EMA_30S_WINDOW,
+  EMA_5MIN_WINDOW,
+  MIN_BURST_LENGTH,
+  SAMPLE_INTERVAL_MS,
+} from '../constants';
 
-/* ───────────────────────────────────────────────────
-   EMA (Exponential Moving Average)
-   alpha = 2 / (N + 1)  where N = window_seconds / sample_interval
-   ─────────────────────────────────────────────────── */
+const SAMPLE_INTERVAL_SEC = SAMPLE_INTERVAL_MS / 1000;
+const FIVE_MIN_SLOTS = Math.ceil(EMA_5MIN_WINDOW / SAMPLE_INTERVAL_SEC);
+
+/**
+ * α = 2 / (N + 1), where N is the number of samples in the window.
+ *
+ * @param {number} windowSeconds
+ */
 function emaAlpha(windowSeconds) {
-  const N = windowSeconds / (SAMPLE_INTERVAL / 1000);
+  const N = windowSeconds / SAMPLE_INTERVAL_SEC;
   return 2 / (N + 1);
 }
 
-const ALPHA_30S = emaAlpha(30);    // ~0.118
-const ALPHA_5MIN = emaAlpha(300);  // ~0.013
+const ALPHA_30S = emaAlpha(EMA_30S_WINDOW);
+const ALPHA_5MIN = emaAlpha(EMA_5MIN_WINDOW);
 
-/* ───────────────────────────────────────────────────
-   Simple linear regression slope on an array of values
-   Returns slope per sample (multiply by 30 to get per-minute)
-   ─────────────────────────────────────────────────── */
+/**
+ * Ordinary least-squares slope over an array of values (x = index).
+ *
+ * @param {number[]} values
+ * @returns {number} Slope per sample. Multiply by 30 to get slope per minute.
+ */
 function linearSlope(values) {
   const n = values.length;
   if (n < 3) return 0;
-  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-  for (let i = 0; i < n; i++) {
+
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumX2 = 0;
+  for (let i = 0; i < n; i += 1) {
     sumX += i;
     sumY += values[i];
     sumXY += i * values[i];
@@ -34,13 +58,13 @@ function linearSlope(values) {
   return (n * sumXY - sumX * sumY) / denom;
 }
 
-/* ───────────────────────────────────────────────────
-   Distraction burst detection
-   A "burst" = consecutive samples with score < threshold
-   ─────────────────────────────────────────────────── */
-const DISTRACTION_THRESHOLD = 50;
-const MIN_BURST_LENGTH = 3; // 3 samples × 2s = 6s minimum
-
+/**
+ * Count contiguous runs of samples with score < threshold that are at least
+ * ``MIN_BURST_LENGTH`` long.
+ *
+ * @param {number[]} scores
+ * @returns {number}
+ */
 function countBursts(scores) {
   let bursts = 0;
   let streak = 0;
@@ -56,11 +80,19 @@ function countBursts(scores) {
   return bursts;
 }
 
-/* ═══════════════════════════════════════════════════
-   Hook: useTemporalFeatures
-   Computes time-series derived features from the
-   stream of focus scores produced every 2 seconds.
-   ═══════════════════════════════════════════════════ */
+/**
+ * @typedef {Object} TemporalFeatures
+ * @property {number} focusEma30s
+ * @property {number} focusEma5min
+ * @property {number} focusTrend - Slope of the last 5 min of scores.
+ * @property {number} distractionBurstCount
+ */
+
+/**
+ * @param {number} currentScore - Latest focus score.
+ * @param {boolean} isRunning - Resets state to defaults when false.
+ * @returns {TemporalFeatures}
+ */
 export default function useTemporalFeatures(currentScore, isRunning) {
   const [temporal, setTemporal] = useState({
     focusEma30s: 100,
@@ -71,9 +103,9 @@ export default function useTemporalFeatures(currentScore, isRunning) {
 
   const ema30Ref = useRef(100);
   const ema5mRef = useRef(100);
-  const historyRef = useRef([]); // last 5 min of scores
+  const historyRef = useRef([]);
 
-  // Reset on session start
+  // Reset state on session start/stop.
   useEffect(() => {
     if (!isRunning) {
       ema30Ref.current = 100;
@@ -88,21 +120,18 @@ export default function useTemporalFeatures(currentScore, isRunning) {
     }
   }, [isRunning]);
 
-  // Update on each new score
+  // Update on each new score.
   useEffect(() => {
     if (!isRunning) return;
 
-    // Update EMAs
     ema30Ref.current = ALPHA_30S * currentScore + (1 - ALPHA_30S) * ema30Ref.current;
     ema5mRef.current = ALPHA_5MIN * currentScore + (1 - ALPHA_5MIN) * ema5mRef.current;
 
-    // Maintain 5-min history
     historyRef.current.push(currentScore);
     if (historyRef.current.length > FIVE_MIN_SLOTS) {
       historyRef.current.shift();
     }
 
-    // Compute trend (slope) and bursts
     const trend = linearSlope(historyRef.current);
     const bursts = countBursts(historyRef.current);
 

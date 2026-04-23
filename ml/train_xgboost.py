@@ -18,51 +18,29 @@ Usage:
 import argparse
 import json
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GroupKFold, KFold
 from sklearn.metrics import (
-    mean_absolute_error, mean_squared_error, accuracy_score,
-    f1_score, classification_report,
+    accuracy_score, f1_score, mean_absolute_error, mean_squared_error,
+)
+from sklearn.model_selection import GroupKFold, KFold
+
+from features import (
+    ABLATION_FEATURE_SETS, ALL_FEATURES, BEHAVIORAL, CONTEXTUAL, TEMPORAL, VISUAL,
+)
+from paths import (
+    DATASET_CSV, XGBOOST_CLASSIFIER, XGBOOST_REGRESSOR,
+    XGBOOST_RESULTS_JSON, ensure_dirs,
 )
 
 warnings.filterwarnings("ignore")
 
-DATA_DIR = Path(__file__).parent / "data"
-MODEL_DIR = Path(__file__).parent / "models"
-RESULTS_DIR = Path(__file__).parent / "results"
-
-# Feature groups for ablation
-VISUAL = [
-    "head_yaw", "head_pitch", "head_roll",
-    "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
-    # Blendshapes (engagement-relevant)
-    "brow_down_left", "brow_down_right", "brow_inner_up",
-    "eye_squint_left", "eye_squint_right", "eye_wide_left", "eye_wide_right",
-    "jaw_open", "mouth_frown_left", "mouth_frown_right",
-    "mouth_smile_left", "mouth_smile_right",
-]
-BEHAVIORAL = [
-    "keystroke_rate", "mouse_velocity", "mouse_distance",
-    "click_rate", "scroll_rate", "idle_duration", "activity_level",
-]
-CONTEXTUAL = [
-    "tab_switch_count", "window_blur_count",
-    "time_since_tab_return", "session_elapsed_ratio",
-]
-TEMPORAL = [
-    "focus_ema_30s", "focus_ema_5min", "focus_trend", "distraction_burst_count",
-]
-ALL_FEATURES = VISUAL + BEHAVIORAL + CONTEXTUAL + TEMPORAL
-
 
 def load_dataset():
-    path = DATA_DIR / "dataset.csv"
-    if not path.exists():
+    if not DATASET_CSV.exists():
         raise FileNotFoundError("Run feature_engineering.py first")
-    return pd.read_csv(path)
+    return pd.read_csv(DATASET_CSV)
 
 
 def score_to_3class(scores):
@@ -301,17 +279,8 @@ def get_feature_importance(model, feature_cols):
 
 def run_ablation(df, target_col, groups=None):
     """Run ablation study: each modality alone + all combined."""
-    feature_sets = {
-        "visual_only": VISUAL,
-        "behavioral_only": BEHAVIORAL,
-        "contextual_only": CONTEXTUAL,
-        "temporal_only": TEMPORAL,
-        "visual+behavioral": VISUAL + BEHAVIORAL,
-        "all_features": ALL_FEATURES,
-    }
-
     results = {}
-    for name, features in feature_sets.items():
+    for name, features in ABLATION_FEATURE_SETS.items():
         available = [f for f in features if f in df.columns]
         if not available:
             print(f"  Skipping {name}: no features available")
@@ -335,8 +304,7 @@ def main():
                         help="Training strategy")
     args = parser.parse_args()
 
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_dirs()
 
     print("Loading dataset...")
     df = load_dataset()
@@ -375,8 +343,8 @@ def main():
     print(f"  MAE:  {reg_metrics['mae_mean']:.3f} ± {reg_metrics['mae_std']:.3f}")
     print(f"  RMSE: {reg_metrics['rmse_mean']:.3f} ± {reg_metrics['rmse_std']:.3f}")
 
-    reg_model.save_model(str(MODEL_DIR / "xgboost_regressor.json"))
-    print(f"  Model saved → {MODEL_DIR / 'xgboost_regressor.json'}")
+    reg_model.save_model(str(XGBOOST_REGRESSOR))
+    print(f"  Model saved → {XGBOOST_REGRESSOR}")
 
     # Feature importance
     importance = get_feature_importance(reg_model, available_features)
@@ -393,7 +361,7 @@ def main():
     print(f"  Accuracy: {cls_metrics['accuracy_mean']:.3f} ± {cls_metrics['accuracy_std']:.3f}")
     print(f"  F1 Macro: {cls_metrics['f1_macro_mean']:.3f} ± {cls_metrics['f1_macro_std']:.3f}")
 
-    cls_model.save_model(str(MODEL_DIR / "xgboost_classifier.json"))
+    cls_model.save_model(str(XGBOOST_CLASSIFIER))
 
     # ── Rule-Based vs ML Comparison (THE KEY RESULT) ──
     print("\n═══ Rule-Based vs ML Comparison ═══")
@@ -423,10 +391,9 @@ def main():
         "ablation": ablation_results,
     }
 
-    results_path = RESULTS_DIR / "xgboost_results.json"
-    with open(results_path, "w") as f:
+    with open(XGBOOST_RESULTS_JSON, "w") as f:
         json.dump(all_results, f, indent=2)
-    print(f"\nAll results saved → {results_path}")
+    print(f"\nAll results saved → {XGBOOST_RESULTS_JSON}")
 
 
 if __name__ == "__main__":
