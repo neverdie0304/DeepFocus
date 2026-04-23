@@ -194,8 +194,13 @@ export default function useSession() {
   const resumeSession = useCallback(() => timer.resume(), [timer]);
 
   const endSession = useCallback(async () => {
-    timer.stop();
+    // Set ``ending`` *before* stopping the timer. Stopping the timer
+    // transitions status to ``'idle'`` which would otherwise cause
+    // SessionPage to flash the task-type selection UI during the
+    // upload. With the ``ending`` flag already set, SessionPage renders
+    // a "Saving…" screen for the entire async window.
     setEnding(true);
+    timer.stop();
 
     const avgScore = events.length > 0
       ? events.reduce((sum, e) => sum + e.focus_score, 0) / events.length
@@ -235,7 +240,9 @@ export default function useSession() {
       throw err;
     }
 
-    setEnding(false);
+    // On success we leave ``ending`` as true: the caller navigates away
+    // immediately so the component unmounts. Clearing ``ending`` here
+    // would re-expose the idle UI for one render before navigation.
     const id = sessionId;
     setSessionId(null);
     timer.reset();

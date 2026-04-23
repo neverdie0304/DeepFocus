@@ -140,6 +140,8 @@ export default function useFaceDetection(enabled = false) {
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
+      videoRef.current.remove();
+      videoRef.current = null;
     }
     setCameraReady(false);
   }, []);
@@ -165,11 +167,24 @@ export default function useFaceDetection(enabled = false) {
         streamRef.current = mediaStream;
         setStream(mediaStream);
 
-        // 2. Attach to an offscreen <video> for MediaPipe to read from.
+        // 2. Attach to a <video> for MediaPipe to read from. The element
+        //    MUST be in the DOM — Chrome/Safari can pause detached video
+        //    elements under memory pressure, which causes detectForVideo
+        //    to keep returning the last rendered frame. That silently
+        //    "freezes" facePresent=true even when the user has left the
+        //    camera, flattening the focus-score graph.
         const video = document.createElement('video');
         video.srcObject = mediaStream;
         video.setAttribute('playsinline', '');
         video.muted = true;
+        video.style.position = 'fixed';
+        video.style.width = '1px';
+        video.style.height = '1px';
+        video.style.opacity = '0';
+        video.style.pointerEvents = 'none';
+        video.style.left = '-1px';
+        video.style.top = '-1px';
+        document.body.appendChild(video);
         await video.play();
         videoRef.current = video;
 

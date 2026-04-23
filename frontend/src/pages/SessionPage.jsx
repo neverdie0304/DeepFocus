@@ -85,6 +85,17 @@ export default function SessionPage() {
   const isRunning = session.status === 'running';
   const isPaused = session.status === 'paused';
 
+  // Shown while endSession() is running its uploads. Takes priority
+  // over isIdle so the task-type UI never flashes during shutdown.
+  if (session.ending) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-32">
+        <div className="w-10 h-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-gray-400 text-sm">Saving session…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center gap-8 py-8">
       {showConsent && (
