@@ -67,8 +67,18 @@ export default function SessionPage() {
   };
 
   const handleEnd = async () => {
-    const id = await session.endSession();
-    if (id) navigate(`/session/${id}/report`);
+    try {
+      const id = await session.endSession();
+      if (id) navigate(`/session/${id}/report`);
+    } catch (err) {
+      // Session metadata failed to save — end_time is not set, so the
+      // session will not appear on the dashboard. Tell the user so they
+      // can retry rather than silently dropping them on a stale view.
+      console.error('endSession failed:', err);
+      alert(
+        'Failed to save the session. Please check your connection and press End Session again.',
+      );
+    }
   };
 
   const isIdle = session.status === 'idle';

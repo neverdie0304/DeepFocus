@@ -23,19 +23,43 @@ class SessionListCreateTests(APITestCase):
         self.other = User.objects.create_user(username="bob", password="pass12345")
         self.client.force_authenticate(self.user)
 
-    def test_list_returns_only_own_sessions(self):
+    def test_list_returns_only_own_completed_sessions(self):
+        # Two completed sessions for self.user (end_time set).
+        FocusSession.objects.create(
+            user=self.user, start_time=timezone.now(), end_time=timezone.now(),
+        )
+        FocusSession.objects.create(
+            user=self.user, start_time=timezone.now(), end_time=timezone.now(),
+        )
+        # One for another user (should be excluded by ownership).
+        FocusSession.objects.create(
+            user=self.other, start_time=timezone.now(), end_time=timezone.now(),
+        )
+        # One incomplete session for self.user (should be excluded by
+        # the new end_time__isnull=False filter).
         FocusSession.objects.create(user=self.user, start_time=timezone.now())
-        FocusSession.objects.create(user=self.user, start_time=timezone.now())
-        FocusSession.objects.create(user=self.other, start_time=timezone.now())
 
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 2)
 
+    def test_list_excludes_incomplete_sessions(self):
+        # A session created but never ended (no end_time) is invisible.
+        FocusSession.objects.create(user=self.user, start_time=timezone.now())
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 0)
+
     def test_list_date_range_filter(self):
         now = timezone.now()
-        FocusSession.objects.create(user=self.user, start_time=now - timedelta(days=10))
-        FocusSession.objects.create(user=self.user, start_time=now)
+        FocusSession.objects.create(
+            user=self.user,
+            start_time=now - timedelta(days=10),
+            end_time=now - timedelta(days=10),
+        )
+        FocusSession.objects.create(
+            user=self.user, start_time=now, end_time=now,
+        )
 
         yesterday = (now - timedelta(days=1)).date().isoformat()
         response = self.client.get(self.url, {"from": yesterday})

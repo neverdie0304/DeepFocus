@@ -37,7 +37,12 @@ class SessionListCreateView(APIView):
     """List the caller's sessions (optionally filtered by date) or create a new one."""
 
     def get(self, request):
-        qs = FocusSession.objects.filter(user=request.user)
+        # Only completed sessions (end_time is set) are listed. Incomplete
+        # sessions — created but not yet ended — are invisible to the
+        # dashboard and history pages, matching the analytics endpoint.
+        qs = FocusSession.objects.filter(
+            user=request.user, end_time__isnull=False,
+        )
 
         date_from = request.query_params.get("from")
         date_to = request.query_params.get("to")

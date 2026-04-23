@@ -201,18 +201,26 @@ export default function useSession() {
       ? events.reduce((sum, e) => sum + e.focus_score, 0) / events.length
       : 0;
 
-    try {
-      // Flush any events still buffered locally.
-      const pending = events.slice(uploadedCountRef.current);
-      if (pending.length > 0) {
-        try {
-          await uploadEvents(sessionId, pending);
-          uploadedCountRef.current = events.length;
-        } catch (err) {
-          console.error('Final event upload failed:', err);
-        }
+    // Flush remaining events. Non-fatal: session metadata is more
+    // important than a handful of unuploaded events, and the final
+    // updateSession call is what stamps ``end_time`` so the session
+    // becomes visible on the dashboard.
+    const pending = events.slice(uploadedCountRef.current);
+    if (pending.length > 0) {
+      try {
+        await uploadEvents(sessionId, pending);
+        uploadedCountRef.current = events.length;
+      } catch (err) {
+        console.error('Final event upload failed:', err);
       }
+    }
 
+    // Persist session metadata — critical. If this fails the session
+    // stays "incomplete" on the server (end_time is null) and will be
+    // filtered out of every listing. We re-throw so the caller can
+    // surface the failure instead of silently dropping the user on the
+    // report page for a session that was never saved.
+    try {
       await updateSession(sessionId, {
         end_time: new Date().toISOString(),
         duration: timer.elapsed,
@@ -223,11 +231,11 @@ export default function useSession() {
         time_looking_away: totals.current.lookingAway,
       });
     } catch (err) {
-      console.error('Session save failed:', err);
-    } finally {
       setEnding(false);
+      throw err;
     }
 
+    setEnding(false);
     const id = sessionId;
     setSessionId(null);
     timer.reset();

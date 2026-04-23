@@ -18,18 +18,32 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+// All date arithmetic below stays in UTC so that "Monday" is computed
+// consistently regardless of the user's local timezone. Using local-time
+// parsing followed by ``toISOString()`` caused the week boundary to slip
+// by a day for users east of UTC (e.g. Korea, UTC+9).
+
+function parseYmdUtc(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function formatYmdUtc(date) {
+  return date.toISOString().split('T')[0];
+}
+
 function getMonday(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  return d.toISOString().split('T')[0];
+  const date = parseYmdUtc(dateStr);
+  const weekday = date.getUTCDay();                         // 0 = Sunday
+  const daysFromMonday = weekday === 0 ? 6 : weekday - 1;
+  date.setUTCDate(date.getUTCDate() - daysFromMonday);
+  return formatYmdUtc(date);
 }
 
 function addDays(dateStr, days) {
-  const d = new Date(dateStr + 'T00:00:00');
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
+  const date = parseYmdUtc(dateStr);
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatYmdUtc(date);
 }
 
 export default function DashboardPage() {

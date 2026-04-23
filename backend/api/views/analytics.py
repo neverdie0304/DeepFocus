@@ -9,17 +9,27 @@ Aggregates the user's focus sessions for a given week into:
 
 The week is defined Monday–Sunday, derived from the optional ``date``
 query parameter (defaulting to today).
+
+Implementation notes
+--------------------
+Both the daily breakdown and the hourly heatmap are computed with a single
+``GROUP BY`` query each, using Django's ``TruncDate`` and ``ExtractHour``
+database functions. An earlier implementation looped over seven days (and
+for the heatmap, over twenty-four hours within each day) issuing one
+aggregate query per iteration — a classic N+1 pattern that produced 175+
+round trips per dashboard load.
 """
 from __future__ import annotations
 
 from datetime import date as dt_date, timedelta
 
 from django.db.models import Avg, Count, Sum
+from django.db.models.functions import ExtractHour, TruncDate
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.constants import DAYS_IN_WEEK, HOURS_IN_DAY
+from api.constants import DAYS_IN_WEEK
 from api.models import FocusSession, SessionEvent
 
 
@@ -49,7 +59,9 @@ class WeeklyAnalyticsView(APIView):
         )
 
         daily = self._daily_breakdown(sessions, start_of_week)
-        heatmap = self._hourly_heatmap(request.user, start_of_week)
+        heatmap = self._hourly_heatmap(
+            request.user, start_of_week, end_of_week,
+        )
 
         return Response({
             "week_start": start_of_week.isoformat(),
@@ -79,41 +91,68 @@ class WeeklyAnalyticsView(APIView):
 
     @staticmethod
     def _daily_breakdown(sessions, start_of_week):
-        """Return a list of seven daily summaries."""
-        daily = []
-        for i in range(DAYS_IN_WEEK):
-            day = start_of_week + timedelta(days=i)
-            agg = sessions.filter(start_time__date=day).aggregate(
+        """
+        Return seven daily summaries using a single aggregation query.
+
+        Uses ``TruncDate('start_time')`` to bucket sessions by calendar date
+        and ``GROUP BY`` in the database rather than looping in Python.
+        """
+        rows = (
+            sessions
+            .annotate(day=TruncDate("start_time"))
+            .values("day")
+            .annotate(
                 count=Count("id"),
                 avg_score=Avg("focus_score_final"),
                 total_duration=Sum("duration"),
             )
+        )
+        by_day = {row["day"]: row for row in rows}
+
+        daily = []
+        for i in range(DAYS_IN_WEEK):
+            day = start_of_week + timedelta(days=i)
+            row = by_day.get(day)
             daily.append({
                 "date": day.isoformat(),
-                "sessions": agg["count"],
-                "avg_score": agg["avg_score"],
-                "total_duration": agg["total_duration"] or 0,
+                "sessions": row["count"] if row else 0,
+                "avg_score": row["avg_score"] if row else None,
+                "total_duration": row["total_duration"] if row else 0,
             })
         return daily
 
     @staticmethod
-    def _hourly_heatmap(user, start_of_week):
-        """Return per-day-per-hour score averages (only where data exists)."""
-        heatmap = []
-        for i in range(DAYS_IN_WEEK):
-            day = start_of_week + timedelta(days=i)
-            day_events = SessionEvent.objects.filter(
+    def _hourly_heatmap(user, start_of_week, end_of_week):
+        """
+        Return per-day-per-hour score averages using a single query.
+
+        Groups events by ``session.start_time::date`` (to preserve the
+        session's wall-clock day) and ``timestamp::hour``, then maps the
+        date back to a 0–6 day-of-week index relative to Monday.
+        """
+        rows = (
+            SessionEvent.objects
+            .filter(
                 session__user=user,
-                session__start_time__date=day,
+                session__start_time__date__gte=start_of_week,
+                session__start_time__date__lte=end_of_week,
             )
-            for hour in range(HOURS_IN_DAY):
-                avg = day_events.filter(timestamp__hour=hour).aggregate(
-                    avg=Avg("focus_score"),
-                )["avg"]
-                if avg is not None:
-                    heatmap.append({
-                        "day": i,
-                        "hour": hour,
-                        "score": round(avg, 1),
-                    })
+            .annotate(
+                session_date=TruncDate("session__start_time"),
+                event_hour=ExtractHour("timestamp"),
+            )
+            .values("session_date", "event_hour")
+            .annotate(avg=Avg("focus_score"))
+            .order_by("session_date", "event_hour")
+        )
+
+        heatmap = []
+        for row in rows:
+            day_idx = (row["session_date"] - start_of_week).days
+            if 0 <= day_idx < DAYS_IN_WEEK and row["avg"] is not None:
+                heatmap.append({
+                    "day": day_idx,
+                    "hour": row["event_hour"],
+                    "score": round(row["avg"], 1),
+                })
         return heatmap
