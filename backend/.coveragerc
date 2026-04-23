@@ -1,0 +1,22 @@
+[run]
+source = api
+branch = True
+omit =
+    */migrations/*
+    */tests/*
+    manage.py
+    */settings.py
+    */wsgi.py
+    */asgi.py
+    */__init__.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    class .*\bProtocol\):
+    @abstractmethod
+precision = 1
+show_missing = True
+skip_covered = False
