@@ -61,11 +61,32 @@ export default function useSession() {
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { eventsRef.current = events; }, [events]);
 
-  // Backward-compatible derived booleans.
+  // Backward-compatible derived booleans (used only for rendering, not by
+  // the sampling loop; the loop reads fresh values from refs below).
   const isFaceMissing = !faceFeatures.facePresent;
   const isLookingAway = faceFeatures.lookingAway || false;
 
+  // Refs mirroring the latest values of every hook-produced state the
+  // sampling loop needs. Without this, including ``faceFeatures`` (updated
+  // at 10 Hz by the face-detection hook) in the effect's dependency list
+  // tears down and recreates the 2-second interval on every frame, so the
+  // callback never fires and distraction totals never accumulate.
+  const faceFeaturesRef = useRef(faceFeatures);
+  const signalsRef = useRef(signals);
+  const contextSignalsRef = useRef(contextSignals);
+  const temporalRef = useRef(temporal);
+  const cameraEnabledRef = useRef(cameraEnabled);
+
+  useEffect(() => { faceFeaturesRef.current = faceFeatures; }, [faceFeatures]);
+  useEffect(() => { signalsRef.current = signals; }, [signals]);
+  useEffect(() => { contextSignalsRef.current = contextSignals; }, [contextSignals]);
+  useEffect(() => { temporalRef.current = temporal; }, [temporal]);
+  useEffect(() => { cameraEnabledRef.current = cameraEnabled; }, [cameraEnabled]);
+
   // ── Main sampling loop (every 2 seconds while running). ──
+  // Depends only on ``isRunning`` so the interval is set once per session
+  // start and cleared once per session end. All other state is read from
+  // refs so the interval is never prematurely torn down.
   useEffect(() => {
     if (!isRunning) {
       if (samplingRef.current) clearInterval(samplingRef.current);
@@ -73,13 +94,21 @@ export default function useSession() {
     }
 
     samplingRef.current = setInterval(() => {
-      const { isTabHidden, isIdle } = signals;
+      const ff = faceFeaturesRef.current;
+      const sig = signalsRef.current;
+      const ctx = contextSignalsRef.current;
+      const tmp = temporalRef.current;
+      const camOn = cameraEnabledRef.current;
+
+      const { isTabHidden, isIdle } = sig;
+      const faceMissing = !ff.facePresent;
+      const lookingAway = ff.lookingAway || false;
 
       const score = computeFocusScore({
         isIdle,
-        isFaceMissing,
-        isLookingAway,
-        cameraEnabled,
+        isFaceMissing: faceMissing,
+        isLookingAway: lookingAway,
+        cameraEnabled: camOn,
       });
       setCurrentScore(score);
 
@@ -87,14 +116,14 @@ export default function useSession() {
       const interval = SAMPLE_INTERVAL_MS / 1000;
       if (isIdle) totals.current.idle += interval;
       if (isTabHidden) totals.current.tabHidden += interval;
-      if (isFaceMissing && cameraEnabled) totals.current.faceMissing += interval;
-      if (isLookingAway && cameraEnabled) totals.current.lookingAway += interval;
+      if (faceMissing && camOn) totals.current.faceMissing += interval;
+      if (lookingAway && camOn) totals.current.lookingAway += interval;
 
       const mlFeatures = assembleFeatureVector({
-        faceFeatures,
-        behaviourFeatures: signals,
-        contextFeatures: contextSignals,
-        temporalFeatures: temporal,
+        faceFeatures: ff,
+        behaviourFeatures: sig,
+        contextFeatures: ctx,
+        temporalFeatures: tmp,
       });
 
       setEvents((prev) => [
@@ -104,8 +133,8 @@ export default function useSession() {
           focus_score: score,
           is_tab_hidden: isTabHidden,
           is_idle: isIdle,
-          is_face_missing: isFaceMissing,
-          is_looking_away: isLookingAway,
+          is_face_missing: faceMissing,
+          is_looking_away: lookingAway,
           ...mlFeatures,
         },
       ]);
@@ -114,16 +143,7 @@ export default function useSession() {
     return () => {
       if (samplingRef.current) clearInterval(samplingRef.current);
     };
-  }, [
-    isRunning,
-    signals,
-    faceFeatures,
-    isFaceMissing,
-    isLookingAway,
-    cameraEnabled,
-    contextSignals,
-    temporal,
-  ]);
+  }, [isRunning]);
 
   // ── Periodic upload loop (every 30s while running). ──
   useEffect(() => {
