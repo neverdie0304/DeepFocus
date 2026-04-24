@@ -17,6 +17,22 @@ export const PERIODIC_UPLOAD_INTERVAL_MS = 30_000;  // Flush buffered events eve
 export const VISION_FPS = 10;
 export const FRAME_INTERVAL_MS = 1000 / VISION_FPS;
 export const YAW_THRESHOLD_DEG = 25;      // Beyond this, treat as "looking away"
+// Pitch is split into two thresholds because looking up and looking down
+// carry different meanings. Looking up past ~20° almost always indicates
+// attention is off the screen (checking the ceiling, window, or someone
+// entering the room). Looking down past 20°, however, is consistent with
+// legitimate work in several common task types — reading a book, taking
+// notes on paper, solving problems on a pad — so a symmetric threshold
+// generated a lot of false-positive looking-away time during those
+// sessions. DOWN_TOLERANT_TASKS below controls when pitch-down is
+// suppressed; pitch-up is always checked.
+//
+// Sign convention (verified empirically via SessionPage's pitch readout):
+// positive pitch = looking up, negative pitch = looking down.
+export const PITCH_UP_THRESHOLD_DEG = 20;
+// Retained for the ML-fallback scorer only (scoring.js::computeFocusScoreML),
+// which cannot access the task type. A symmetric threshold there is the
+// safer default.
 export const PITCH_THRESHOLD_DEG = 20;
 export const CAMERA_WIDTH = 320;
 export const CAMERA_HEIGHT = 240;
@@ -72,6 +88,12 @@ export const TASK_TYPES = [
 //    and study sessions are *not* in this set because they legitimately
 //    lack input activity (reading a book, watching a lecture, thinking).
 export const INPUT_REQUIRED_TASKS = new Set(['coding', 'writing']);
+
+// ── Task types during which looking down (writing in a notebook,
+//    reading a book, working through a problem on paper) is expected
+//    and should not count as "looking away." Looking up and sideways
+//    still do, regardless of task type.
+export const DOWN_TOLERANT_TASKS = new Set(['study', 'reading', 'writing']);
 
 // ── MediaPipe model CDN ──
 export const FACE_LANDMARKER_MODEL_URL =

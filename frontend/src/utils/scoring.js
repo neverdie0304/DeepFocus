@@ -15,6 +15,7 @@
  * sent to the backend and fed to the model.
  */
 import {
+  DOWN_TOLERANT_TASKS,
   INPUT_REQUIRED_TASKS,
   PENALTY_FACE_MISSING,
   PENALTY_IDLE,
@@ -22,6 +23,7 @@ import {
   PENALTY_LOOKING_AWAY,
   PENALTY_PHONE_USE,
   PITCH_THRESHOLD_DEG,
+  PITCH_UP_THRESHOLD_DEG,
   SAMPLE_INTERVAL_MS,
   YAW_THRESHOLD_DEG,
 } from '../constants';
@@ -176,6 +178,43 @@ export async function computeFocusScoreML(featureVector, scalerParams = null) {
     isPhonePresent,
     cameraEnabled,
   });
+}
+
+/**
+ * Decide whether the current head pose counts as "looking away" for the
+ * given task type.
+ *
+ * Yaw (left/right) is always checked symmetrically — turning the head
+ * sideways is off-task for any task. Pitch (up/down) is split:
+ *
+ *   - Looking up past ``PITCH_UP_THRESHOLD_DEG`` always counts as
+ *     looking away. There is no task in which looking at the ceiling is
+ *     on-task.
+ *   - Looking down past the same threshold counts as looking away
+ *     *only* when the task is not in ``DOWN_TOLERANT_TASKS`` —
+ *     otherwise the user may be writing in a notebook, reading a book,
+ *     or working a problem on paper, all of which are the point of the
+ *     session.
+ *
+ * Known limitation (see thesis §3.5.5): for down-tolerant tasks, a user
+ * scrolling a phone in their lap produces the same head pose as a user
+ * reading from a desk. Phone-in-frame detection partially covers this;
+ * phone-below-frame cannot be distinguished from legitimate work by
+ * pose alone.
+ *
+ * @param {number|null} yaw - Head yaw in degrees; null when no face is detected.
+ * @param {number|null} pitch - Head pitch in degrees (positive = up, negative = down).
+ * @param {string} taskType - One of the TASK_TYPES value strings.
+ * @returns {boolean}
+ */
+export function isLookingAwayForTask(yaw, pitch, taskType) {
+  if (yaw === null || yaw === undefined || pitch === null || pitch === undefined) {
+    return false;
+  }
+  if (Math.abs(yaw) > YAW_THRESHOLD_DEG) return true;
+  if (pitch > PITCH_UP_THRESHOLD_DEG) return true;
+  if (DOWN_TOLERANT_TASKS.has(taskType)) return false;
+  return pitch < -PITCH_UP_THRESHOLD_DEG;
 }
 
 /**

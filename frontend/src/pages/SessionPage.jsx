@@ -146,9 +146,12 @@ export default function SessionPage() {
             className="w-full h-auto mirror"
             style={{ transform: 'scaleX(-1)' }}
           />
-          {/* Status overlay */}
+          {/* Status overlay — mirrors the task-conditional looking-away
+              logic the scorer uses, so the dot does not flash yellow
+              during study/reading sessions when the user simply looks
+              down at a book. */}
           <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${
-            face.facePresent && !face.lookingAway ? 'bg-green-500' :
+            face.facePresent && !session.cameraSignals.isLookingAway ? 'bg-green-500' :
             face.facePresent ? 'bg-yellow-500' : 'bg-red-500'
           } shadow-lg`} />
           {!face.facePresent && (
@@ -172,9 +175,9 @@ export default function SessionPage() {
                 <span className={`w-2 h-2 rounded-full ${!face.facePresent ? 'bg-red-400' : 'bg-gray-600'}`} />
                 {face.facePresent ? 'Face OK' : 'No Face'}
               </div>
-              <div className={`flex items-center gap-1.5 ${face.lookingAway ? 'text-yellow-400' : 'text-gray-500'}`}>
-                <span className={`w-2 h-2 rounded-full ${face.lookingAway ? 'bg-yellow-400' : 'bg-gray-600'}`} />
-                {face.lookingAway ? 'Looking Away' : 'Gaze OK'}
+              <div className={`flex items-center gap-1.5 ${session.cameraSignals.isLookingAway ? 'text-yellow-400' : 'text-gray-500'}`}>
+                <span className={`w-2 h-2 rounded-full ${session.cameraSignals.isLookingAway ? 'bg-yellow-400' : 'bg-gray-600'}`} />
+                {session.cameraSignals.isLookingAway ? 'Looking Away' : 'Gaze OK'}
               </div>
               <div className={`flex items-center gap-1.5 ${face.phonePresent ? 'text-orange-400' : 'text-gray-500'}`}>
                 <span className={`w-2 h-2 rounded-full ${face.phonePresent ? 'bg-orange-400' : 'bg-gray-600'}`} />

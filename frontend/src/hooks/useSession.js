@@ -24,6 +24,7 @@ import {
   assembleFeatureVector,
   computeFocusScore,
   isIdleForTask,
+  isLookingAwayForTask,
 } from '../utils/scoring';
 import useBehaviourSignals from './useBehaviourSignals';
 import useContextSignals from './useContextSignals';
@@ -75,8 +76,15 @@ export default function useSession() {
 
   // Backward-compatible derived booleans (used only for rendering, not by
   // the sampling loop; the loop reads fresh values from refs below).
+  // Kept consistent with the sampling-loop logic so the UI "Looking Away"
+  // indicator doesn't flash during study/reading sessions when the user
+  // merely tilts their head down to a book.
   const isFaceMissing = !faceFeatures.facePresent;
-  const isLookingAway = faceFeatures.lookingAway || false;
+  const isLookingAway = faceFeatures.facePresent && isLookingAwayForTask(
+    faceFeatures.headYaw,
+    faceFeatures.headPitch,
+    taskType,
+  );
 
   // Refs mirroring the latest values of every hook-produced state the
   // sampling loop needs. Without this, including ``faceFeatures`` (updated
@@ -118,8 +126,19 @@ export default function useSession() {
 
       const { isTabHidden } = sig;
       const faceMissing = !ff.facePresent;
-      const lookingAway = ff.lookingAway || false;
       const phonePresent = ff.phonePresent || false;
+
+      // Compute looking-away from raw head pose using task-conditional
+      // thresholds (see isLookingAwayForTask): looking up is always
+      // off-task, looking down is on-task for study / reading /
+      // writing (where work legitimately happens on paper or a book).
+      // Face-missing frames pass yaw=null/pitch=null, which the helper
+      // treats as not-looking-away — face_missing already covers them.
+      const lookingAway = ff.facePresent && isLookingAwayForTask(
+        ff.headYaw,
+        ff.headPitch,
+        taskTypeRef.current,
+      );
 
       // System-wide idle matters only when the task requires continuous
       // input (coding, writing). For reading / video / study / other,
@@ -280,12 +299,17 @@ export default function useSession() {
     return id;
   }, [timer, events, sessionId]);
 
+  // Idle signal as the scorer sees it — system-wide and task-gated.
+  // Exposed to the UI so the "Idle / Active" indicator tracks the
+  // actual scoring input rather than a stale tab-level flag.
+  const scoringIdle = isIdleForTask(taskType, idleDetection.isIdle);
+
   return {
     sessionId,
     status: timer.status,
     elapsed: timer.elapsed,
     currentScore,
-    signals,
+    signals: { ...signals, isIdle: scoringIdle },
     cameraEnabled,
     setCameraEnabled,
     taskType,

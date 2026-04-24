@@ -14,6 +14,7 @@ import {
   formatDuration,
   formatTime,
   isIdleForTask,
+  isLookingAwayForTask,
 } from './scoring';
 import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
 
@@ -494,5 +495,121 @@ describe('computeLockedInSeconds', () => {
       { is_face_missing: false, is_looking_away: false },
     ];
     expect(computeLockedInSeconds(events)).toBe(4);
+  });
+});
+
+describe('isLookingAwayForTask', () => {
+  describe('yaw (always symmetric, any task)', () => {
+    it('flags hard right turn for any task', () => {
+      expect(isLookingAwayForTask(40, 0, 'coding')).toBe(true);
+      expect(isLookingAwayForTask(40, 0, 'study')).toBe(true);
+    });
+
+    it('flags hard left turn for any task', () => {
+      expect(isLookingAwayForTask(-40, 0, 'coding')).toBe(true);
+      expect(isLookingAwayForTask(-40, 0, 'study')).toBe(true);
+    });
+
+    it('does not flag small yaw within threshold', () => {
+      expect(isLookingAwayForTask(10, 0, 'coding')).toBe(false);
+      expect(isLookingAwayForTask(-10, 0, 'study')).toBe(false);
+    });
+
+    it('boundary: 25° exactly is not looking away', () => {
+      expect(isLookingAwayForTask(25, 0, 'coding')).toBe(false);
+      expect(isLookingAwayForTask(-25, 0, 'coding')).toBe(false);
+    });
+
+    it('boundary: 25.1° is looking away', () => {
+      expect(isLookingAwayForTask(25.1, 0, 'coding')).toBe(true);
+    });
+  });
+
+  describe('pitch up (always flagged regardless of task)', () => {
+    it('flags looking up past threshold for coding', () => {
+      expect(isLookingAwayForTask(0, 35, 'coding')).toBe(true);
+    });
+
+    it('flags looking up past threshold for study', () => {
+      expect(isLookingAwayForTask(0, 35, 'study')).toBe(true);
+    });
+
+    it('flags looking up for every task type', () => {
+      for (const t of ['coding', 'writing', 'reading', 'video', 'study', 'other']) {
+        expect(isLookingAwayForTask(0, 35, t)).toBe(true);
+      }
+    });
+
+    it('boundary: 20° pitch up is not looking away', () => {
+      expect(isLookingAwayForTask(0, 20, 'coding')).toBe(false);
+    });
+
+    it('boundary: 20.1° pitch up is looking away', () => {
+      expect(isLookingAwayForTask(0, 20.1, 'coding')).toBe(true);
+    });
+  });
+
+  describe('pitch down on non-tolerant tasks', () => {
+    it('flags looking down past threshold for coding', () => {
+      expect(isLookingAwayForTask(0, -35, 'coding')).toBe(true);
+    });
+
+    it('flags looking down past threshold for video', () => {
+      expect(isLookingAwayForTask(0, -35, 'video')).toBe(true);
+    });
+
+    it('flags looking down past threshold for other', () => {
+      expect(isLookingAwayForTask(0, -35, 'other')).toBe(true);
+    });
+  });
+
+  describe('pitch down on tolerant tasks (study, reading, writing)', () => {
+    it('does NOT flag looking down for study (notebook work)', () => {
+      expect(isLookingAwayForTask(0, -35, 'study')).toBe(false);
+    });
+
+    it('does NOT flag looking down for reading (physical book)', () => {
+      expect(isLookingAwayForTask(0, -35, 'reading')).toBe(false);
+    });
+
+    it('does NOT flag looking down for writing (handwriting on paper)', () => {
+      expect(isLookingAwayForTask(0, -35, 'writing')).toBe(false);
+    });
+
+    it('does NOT flag extreme looking down for study', () => {
+      expect(isLookingAwayForTask(0, -80, 'study')).toBe(false);
+    });
+
+    it('still flags sideways turn while looking down', () => {
+      // Yaw check fires before pitch-down suppression.
+      expect(isLookingAwayForTask(40, -35, 'study')).toBe(true);
+    });
+
+    it('still flags looking up for tolerant tasks', () => {
+      expect(isLookingAwayForTask(0, 35, 'study')).toBe(true);
+    });
+  });
+
+  describe('null/missing pose (face not detected)', () => {
+    it('returns false when yaw is null', () => {
+      expect(isLookingAwayForTask(null, 0, 'coding')).toBe(false);
+    });
+
+    it('returns false when pitch is null', () => {
+      expect(isLookingAwayForTask(0, null, 'coding')).toBe(false);
+    });
+
+    it('returns false when both are undefined', () => {
+      expect(isLookingAwayForTask(undefined, undefined, 'coding')).toBe(false);
+    });
+  });
+
+  describe('unknown task types', () => {
+    it('falls back to non-tolerant behaviour for unknown tasks', () => {
+      // Unknown task types should be treated conservatively — if a user
+      // somehow sends a task the system doesn't know, we err on the side
+      // of flagging extreme pitches.
+      expect(isLookingAwayForTask(0, -35, 'unknown-task')).toBe(true);
+    });
   });
 });
