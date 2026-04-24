@@ -15,15 +15,19 @@
  * sent to the backend and fed to the model.
  */
 import {
+  INPUT_REQUIRED_TASKS,
   PENALTY_FACE_MISSING,
   PENALTY_IDLE,
   PENALTY_IDLE_CAMERA_OFF,
   PENALTY_LOOKING_AWAY,
   PENALTY_PHONE_USE,
   PITCH_THRESHOLD_DEG,
+  SAMPLE_INTERVAL_MS,
   YAW_THRESHOLD_DEG,
 } from '../constants';
 import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
+
+const SAMPLE_SECONDS = SAMPLE_INTERVAL_MS / 1000;
 
 /**
  * @typedef {Object} RuleBasedInput
@@ -172,6 +176,53 @@ export async function computeFocusScoreML(featureVector, scalerParams = null) {
     isPhonePresent,
     cameraEnabled,
   });
+}
+
+/**
+ * Decide whether a system-wide idle observation should count as a
+ * distraction for the given task type.
+ *
+ * Input-required tasks (coding, writing) cannot plausibly be happening
+ * when the user has not touched any input device anywhere on the
+ * system. Input-optional tasks (reading, video, study, other) can —
+ * reading a book, watching a lecture, or thinking with a paper
+ * notebook all produce no input yet remain on-task — so the idle
+ * signal is suppressed for them to avoid false positives.
+ *
+ * @param {string} taskType - One of the TASK_TYPES value strings.
+ * @param {boolean} systemIdle - Output of ``useIdleDetection``.
+ * @returns {boolean}
+ */
+export function isIdleForTask(taskType, systemIdle) {
+  return INPUT_REQUIRED_TASKS.has(taskType) && Boolean(systemIdle);
+}
+
+/**
+ * Seconds within a session where every distraction flag is false.
+ *
+ * Counting events (rather than ``duration - sum(time_*)``) avoids
+ * double-counting samples where multiple flags fire simultaneously —
+ * looking at a phone below the camera typically triggers both
+ * ``is_phone_present`` and ``is_looking_away`` in the same event.
+ *
+ * ``is_idle`` is included because it is already task-type-gated at
+ * the sampling layer (see ``isIdleForTask``): for reading / video /
+ * study / other sessions it is always false, so the filter has no
+ * effect; for coding / writing sessions it correctly excludes
+ * zero-input samples.
+ *
+ * @param {Array} events - SessionEvents from the detail endpoint.
+ * @returns {number}
+ */
+export function computeLockedInSeconds(events) {
+  if (!events || events.length === 0) return 0;
+  const clean = events.filter((e) => (
+    !e.is_face_missing
+      && !e.is_looking_away
+      && !e.is_phone_present
+      && !e.is_idle
+  ));
+  return clean.length * SAMPLE_SECONDS;
 }
 
 /**

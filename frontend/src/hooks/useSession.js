@@ -19,12 +19,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { createSession, updateSession, uploadEvents } from '../api/sessions';
+import { PERIODIC_UPLOAD_INTERVAL_MS, SAMPLE_INTERVAL_MS } from '../constants';
 import {
-  INPUT_REQUIRED_TASKS,
-  PERIODIC_UPLOAD_INTERVAL_MS,
-  SAMPLE_INTERVAL_MS,
-} from '../constants';
-import { assembleFeatureVector, computeFocusScore } from '../utils/scoring';
+  assembleFeatureVector,
+  computeFocusScore,
+  isIdleForTask,
+} from '../utils/scoring';
 import useBehaviourSignals from './useBehaviourSignals';
 import useContextSignals from './useContextSignals';
 import useIdleDetection from './useIdleDetection';
@@ -125,9 +125,11 @@ export default function useSession() {
       // input (coding, writing). For reading / video / study / other,
       // the user may legitimately be engaged without touching any input
       // device — a book, a lecture, or a paper notebook — so the idle
-      // signal is suppressed for those task types.
-      const taskRequiresInput = INPUT_REQUIRED_TASKS.has(taskTypeRef.current);
-      const isIdle = taskRequiresInput && (idleDetectionRef.current.isIdle || false);
+      // signal is suppressed for those task types. See isIdleForTask.
+      const isIdle = isIdleForTask(
+        taskTypeRef.current,
+        idleDetectionRef.current.isIdle,
+      );
 
       const score = computeFocusScore({
         isIdle,

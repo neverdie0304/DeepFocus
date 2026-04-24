@@ -10,8 +10,10 @@ import {
   assembleFeatureVector,
   computeFocusScore,
   computeFocusScoreML,
+  computeLockedInSeconds,
   formatDuration,
   formatTime,
+  isIdleForTask,
 } from './scoring';
 import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
 
@@ -366,5 +368,131 @@ describe('formatDuration', () => {
 
   it('clamps negative input to zero', () => {
     expect(formatDuration(-5)).toBe('0s');
+  });
+});
+
+describe('isIdleForTask', () => {
+  describe('input-required tasks (coding, writing)', () => {
+    it('propagates a true system-idle signal for coding', () => {
+      expect(isIdleForTask('coding', true)).toBe(true);
+    });
+
+    it('propagates a true system-idle signal for writing', () => {
+      expect(isIdleForTask('writing', true)).toBe(true);
+    });
+
+    it('returns false when system is active', () => {
+      expect(isIdleForTask('coding', false)).toBe(false);
+      expect(isIdleForTask('writing', false)).toBe(false);
+    });
+  });
+
+  describe('input-optional tasks', () => {
+    it('suppresses idle for reading regardless of system state', () => {
+      expect(isIdleForTask('reading', true)).toBe(false);
+      expect(isIdleForTask('reading', false)).toBe(false);
+    });
+
+    it('suppresses idle for video (passive watching)', () => {
+      expect(isIdleForTask('video', true)).toBe(false);
+    });
+
+    it('suppresses idle for study (may be using paper notebook)', () => {
+      expect(isIdleForTask('study', true)).toBe(false);
+    });
+
+    it('suppresses idle for other (ambiguous task type)', () => {
+      expect(isIdleForTask('other', true)).toBe(false);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('returns false for unknown task types', () => {
+      expect(isIdleForTask('unknown', true)).toBe(false);
+    });
+
+    it('coerces truthy / falsy system-idle to boolean', () => {
+      expect(isIdleForTask('coding', null)).toBe(false);
+      expect(isIdleForTask('coding', undefined)).toBe(false);
+      expect(isIdleForTask('coding', 1)).toBe(true);
+    });
+  });
+});
+
+describe('computeLockedInSeconds', () => {
+  const makeEvent = (flags = {}) => ({
+    is_face_missing: false,
+    is_looking_away: false,
+    is_phone_present: false,
+    is_idle: false,
+    ...flags,
+  });
+
+  it('returns 0 for an empty event list', () => {
+    expect(computeLockedInSeconds([])).toBe(0);
+  });
+
+  it('returns 0 for null or undefined events', () => {
+    expect(computeLockedInSeconds(null)).toBe(0);
+    expect(computeLockedInSeconds(undefined)).toBe(0);
+  });
+
+  it('counts every event as 2 seconds when no flags are set', () => {
+    const events = [makeEvent(), makeEvent(), makeEvent()];
+    expect(computeLockedInSeconds(events)).toBe(6);
+  });
+
+  it('excludes samples where face is missing', () => {
+    const events = [
+      makeEvent(),
+      makeEvent({ is_face_missing: true }),
+      makeEvent(),
+    ];
+    expect(computeLockedInSeconds(events)).toBe(4);
+  });
+
+  it('excludes samples where user is looking away', () => {
+    const events = [
+      makeEvent({ is_looking_away: true }),
+      makeEvent(),
+    ];
+    expect(computeLockedInSeconds(events)).toBe(2);
+  });
+
+  it('excludes samples where phone is present', () => {
+    const events = [
+      makeEvent(),
+      makeEvent({ is_phone_present: true }),
+    ];
+    expect(computeLockedInSeconds(events)).toBe(2);
+  });
+
+  it('excludes samples where system is idle (already task-gated upstream)', () => {
+    const events = [
+      makeEvent({ is_idle: true }),
+      makeEvent(),
+      makeEvent({ is_idle: true }),
+    ];
+    expect(computeLockedInSeconds(events)).toBe(2);
+  });
+
+  it('does not double-count events with multiple distraction flags', () => {
+    // A single event that trips both phone + looking_away should be
+    // excluded exactly once, not twice (would go negative otherwise).
+    const events = [
+      makeEvent({ is_phone_present: true, is_looking_away: true }),
+      makeEvent(),
+    ];
+    expect(computeLockedInSeconds(events)).toBe(2);
+  });
+
+  it('ignores flags absent from the event object (treated as false)', () => {
+    // Older events predate the phone/idle fields; they must still
+    // count as Locked In when the webcam flags are clean.
+    const events = [
+      { is_face_missing: false, is_looking_away: false },
+      { is_face_missing: false, is_looking_away: false },
+    ];
+    expect(computeLockedInSeconds(events)).toBe(4);
   });
 });

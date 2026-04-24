@@ -13,49 +13,18 @@ import {
 } from 'chart.js';
 import { Line, Doughnut } from 'react-chartjs-2';
 import { getSession, updateSession, submitSelfReport, deleteSession } from '../api/sessions';
-import { formatDuration, formatTime } from '../utils/scoring';
+import { computeLockedInSeconds, formatDuration, formatTime } from '../utils/scoring';
 
-const SAMPLE_SECONDS = 2;
-
-// Distraction categories shown in the breakdown. Webcam-derived signals
-// always apply (they keep working regardless of tab focus). System-wide
-// idle — sourced from the W3C Idle Detection API — applies only for
-// task types that require continuous keyboard or mouse input; ``is_idle``
-// is always false in events recorded for reading / video / study /
-// other sessions, so this row auto-hides via the zero-time filter.
-// Tab switches are excluded entirely: the Page Visibility API cannot
-// distinguish productive multi-tab workflows from distraction.
+// Distraction categories shown in the breakdown. See utils/scoring.js
+// (computeLockedInSeconds) for the full rationale on which signals
+// count (webcam + task-gated system-wide idle) and which do not
+// (tab-hidden, tab-level idle).
 const DISTRACTION_META = [
   { key: 'phone_use',     label: 'Phone Use',       color: '#fb923c', emoji: '📱' },
   { key: 'face_missing',  label: 'Away from Desk',  color: '#f97316', emoji: '🚶' },
   { key: 'looking_away',  label: 'Looking Away',    color: '#a855f7', emoji: '👀' },
   { key: 'idle',          label: 'Idle (no input)', color: '#eab308', emoji: '😴' },
 ];
-
-/**
- * Compute accurate "locked in" seconds from per-event flags.
- *
- * A sample counts as Locked In only when every distraction flag is
- * false. ``is_idle`` here is the system-wide flag from Idle Detection,
- * already gated by task type during sampling — it is only ever true
- * for input-required tasks, so reading / video / study sessions still
- * count as Locked In when the user is attentively idle-to-the-keyboard.
- *
- * Using ``duration - sum(time_*)`` would double-count samples where
- * multiple flags fire at once (e.g. phone + looking away when a user
- * glances at a phone in their lap). Counting events with *no* flag set
- * gives the true share of wholly-focused samples.
- */
-function computeLockedInSeconds(events) {
-  if (!events || events.length === 0) return 0;
-  const clean = events.filter((e) => (
-    !e.is_face_missing
-      && !e.is_looking_away
-      && !e.is_phone_present
-      && !e.is_idle
-  ));
-  return clean.length * SAMPLE_SECONDS;
-}
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler);
 

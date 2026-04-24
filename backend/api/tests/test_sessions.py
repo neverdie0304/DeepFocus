@@ -141,6 +141,27 @@ class SessionDetailTests(APITestCase):
         self.assertEqual(self.session.duration, 600)
         self.assertEqual(self.session.note, "updated")
 
+    def test_patch_persists_time_phone_use(self):
+        # endSession writes cumulative distraction totals in one PATCH;
+        # time_phone_use is the newest of those totals and must be
+        # accepted and surfaced back on the detail endpoint so the
+        # report page can render the phone-use slice.
+        response = self.client.patch(self._url(), {
+            "end_time": timezone.now().isoformat(),
+            "duration": 900,
+            "time_phone_use": 72.0,
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.session.refresh_from_db()
+        self.assertAlmostEqual(self.session.time_phone_use, 72.0)
+
+    def test_detail_response_exposes_time_phone_use(self):
+        self.session.time_phone_use = 18.5
+        self.session.save()
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertAlmostEqual(response.data["time_phone_use"], 18.5)
+
     def test_cannot_patch_others_session(self):
         other_session = FocusSession.objects.create(
             user=self.other, start_time=timezone.now()
@@ -237,3 +258,36 @@ class EventUploadTests(APITestCase):
             "events": [{"not_a_field": "bad"}],
         }, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_upload_event_with_phone_detection(self):
+        # is_phone_present and phone_confidence are written by the
+        # object-detection branch of the visual pipeline; the API must
+        # persist both values faithfully so the report page can show
+        # phone-use time and the ML pipeline can consume the feature.
+        response = self.client.post(self._url(), {
+            "events": [{
+                "timestamp": timezone.now().isoformat(),
+                "focus_score": 55.0,
+                "is_phone_present": True,
+                "phone_confidence": 0.82,
+            }],
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        event = SessionEvent.objects.first()
+        self.assertTrue(event.is_phone_present)
+        self.assertAlmostEqual(event.phone_confidence, 0.82)
+
+    def test_upload_event_defaults_phone_fields_to_false_and_null(self):
+        # Older clients (and reading / video sessions that do not run
+        # the object detector) may omit the phone fields entirely;
+        # the server must accept that without error.
+        response = self.client.post(self._url(), {
+            "events": [{
+                "timestamp": timezone.now().isoformat(),
+                "focus_score": 95.0,
+            }],
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        event = SessionEvent.objects.first()
+        self.assertFalse(event.is_phone_present)
+        self.assertIsNone(event.phone_confidence)

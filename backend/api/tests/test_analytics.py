@@ -23,7 +23,7 @@ class WeeklyAnalyticsTests(APITestCase):
         self.now = timezone.now()
 
     def _make_session(self, *, days_ago=0, duration=1200, score=80.0,
-                      idle=60, tab=30, user=None):
+                      idle=60, tab=30, phone=0, user=None):
         start = self.now - timedelta(days=days_ago)
         return FocusSession.objects.create(
             user=user or self.user,
@@ -33,6 +33,7 @@ class WeeklyAnalyticsTests(APITestCase):
             focus_score_final=score,
             time_idle=idle,
             time_tab_hidden=tab,
+            time_phone_use=phone,
         )
 
     def test_empty_response_when_no_sessions(self):
@@ -56,6 +57,22 @@ class WeeklyAnalyticsTests(APITestCase):
         response = self.client.get(self.url)
         self.assertAlmostEqual(response.data["distractions"]["idle"], 75)
         self.assertAlmostEqual(response.data["distractions"]["tab_hidden"], 30)
+
+    def test_distractions_include_phone_use_total(self):
+        # Phone use is the newest distraction category; the dashboard
+        # distractions list depends on the weekly analytics endpoint
+        # surfacing it alongside idle, tab_hidden, face_missing, and
+        # looking_away.
+        self._make_session(days_ago=1, phone=40)
+        self._make_session(days_ago=3, phone=25)
+        response = self.client.get(self.url)
+        self.assertIn("phone_use", response.data["distractions"])
+        self.assertAlmostEqual(response.data["distractions"]["phone_use"], 65)
+
+    def test_phone_use_defaults_to_zero_when_absent(self):
+        self._make_session(days_ago=1)  # phone=0 by default
+        response = self.client.get(self.url)
+        self.assertEqual(response.data["distractions"]["phone_use"], 0)
 
     def test_excludes_other_users(self):
         self._make_session(days_ago=1, user=self.user)
