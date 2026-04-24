@@ -109,7 +109,7 @@ describe('computeFocusScore (rule-based)', () => {
 });
 
 describe('assembleFeatureVector', () => {
-  it('returns all 32 named feature keys', () => {
+  it('returns all 36 named feature keys', () => {
     const vector = assembleFeatureVector({});
     const expectedKeys = [
       'head_yaw', 'head_pitch', 'head_roll',
