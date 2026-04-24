@@ -26,7 +26,13 @@ import useContextSignals from './useContextSignals';
 import useTemporalFeatures from './useTemporalFeatures';
 import useTimer from './useTimer';
 
-const INITIAL_TOTALS = { idle: 0, tabHidden: 0, faceMissing: 0, lookingAway: 0 };
+const INITIAL_TOTALS = {
+  idle: 0,
+  tabHidden: 0,
+  faceMissing: 0,
+  lookingAway: 0,
+  phoneUse: 0,
+};
 
 export default function useSession() {
   const timer = useTimer();
@@ -103,11 +109,13 @@ export default function useSession() {
       const { isTabHidden, isIdle } = sig;
       const faceMissing = !ff.facePresent;
       const lookingAway = ff.lookingAway || false;
+      const phonePresent = ff.phonePresent || false;
 
       const score = computeFocusScore({
         isIdle,
         isFaceMissing: faceMissing,
         isLookingAway: lookingAway,
+        isPhonePresent: phonePresent,
         cameraEnabled: camOn,
       });
       setCurrentScore(score);
@@ -118,6 +126,7 @@ export default function useSession() {
       if (isTabHidden) totals.current.tabHidden += interval;
       if (faceMissing && camOn) totals.current.faceMissing += interval;
       if (lookingAway && camOn) totals.current.lookingAway += interval;
+      if (phonePresent && camOn) totals.current.phoneUse += interval;
 
       const mlFeatures = assembleFeatureVector({
         faceFeatures: ff,
@@ -135,6 +144,7 @@ export default function useSession() {
           is_idle: isIdle,
           is_face_missing: faceMissing,
           is_looking_away: lookingAway,
+          is_phone_present: phonePresent,
           ...mlFeatures,
         },
       ]);
@@ -234,6 +244,7 @@ export default function useSession() {
         time_tab_hidden: totals.current.tabHidden,
         time_face_missing: totals.current.faceMissing,
         time_looking_away: totals.current.lookingAway,
+        time_phone_use: totals.current.phoneUse,
       });
     } catch (err) {
       setEnding(false);

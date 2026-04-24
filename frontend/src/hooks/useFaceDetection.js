@@ -18,6 +18,9 @@ import {
   FACE_LANDMARKER_MODEL_URL,
   FRAME_INTERVAL_MS,
   MEDIAPIPE_WASM_URL,
+  OBJECT_DETECTOR_MODEL_URL,
+  PHONE_CLASS_NAME,
+  PHONE_SCORE_THRESHOLD,
   PITCH_THRESHOLD_DEG,
   YAW_THRESHOLD_DEG,
 } from '../constants';
@@ -48,6 +51,9 @@ const DEFAULT_FEATURES = {
   faceConfidence: 0,
   facePresent: false,
   lookingAway: false,
+  // Object detection — phone usage
+  phonePresent: false,
+  phoneConfidence: 0,
   // Blendshapes — engagement-relevant subset
   browDownLeft: 0,
   browDownRight: 0,
@@ -121,6 +127,7 @@ export default function useFaceDetection(enabled = false) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const landmarkerRef = useRef(null);
+  const objectDetectorRef = useRef(null);
   const rafRef = useRef(null);
   const lastProcessRef = useRef(0);
 
@@ -137,6 +144,10 @@ export default function useFaceDetection(enabled = false) {
     if (landmarkerRef.current) {
       landmarkerRef.current.close?.();
       landmarkerRef.current = null;
+    }
+    if (objectDetectorRef.current) {
+      objectDetectorRef.current.close?.();
+      objectDetectorRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
@@ -192,7 +203,7 @@ export default function useFaceDetection(enabled = false) {
         const vision = await import('@mediapipe/tasks-vision');
         if (cancelled) { stopCamera(); return; }
 
-        const { FaceLandmarker, FilesetResolver } = vision;
+        const { FaceLandmarker, FilesetResolver, ObjectDetector } = vision;
         const filesetResolver = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL);
         if (cancelled) { stopCamera(); return; }
 
@@ -207,8 +218,31 @@ export default function useFaceDetection(enabled = false) {
           outputFacialTransformationMatrixes: true,
         });
         if (cancelled) { landmarker.close(); stopCamera(); return; }
-
         landmarkerRef.current = landmarker;
+
+        // 3b. Load the MediaPipe ObjectDetector (EfficientDet-Lite0) for
+        //     phone detection. Kept in the same hook so both detectors
+        //     share the video element and frame cadence. Detection is
+        //     best-effort — if model load fails, we still run face
+        //     detection and leave phone features at their defaults.
+        let objectDetector = null;
+        try {
+          objectDetector = await ObjectDetector.createFromOptions(filesetResolver, {
+            baseOptions: {
+              modelAssetPath: OBJECT_DETECTOR_MODEL_URL,
+              delegate: 'GPU',
+            },
+            runningMode: 'VIDEO',
+            scoreThreshold: PHONE_SCORE_THRESHOLD,
+            maxResults: 5,
+          });
+          if (cancelled) { objectDetector.close(); landmarker.close(); stopCamera(); return; }
+          objectDetectorRef.current = objectDetector;
+        } catch {
+          // Non-fatal: the rest of the pipeline continues without phone
+          // detection. phonePresent stays false for the session.
+        }
+
         setCameraReady(true);
 
         // 4. Run the detection loop at the configured frame interval.
@@ -217,7 +251,7 @@ export default function useFaceDetection(enabled = false) {
           if (timestamp - lastProcessRef.current >= FRAME_INTERVAL_MS) {
             lastProcessRef.current = timestamp;
             try {
-              processFrame(landmarker, video);
+              processFrame(landmarker, objectDetector, video);
             } catch {
               // Skip frame on transient errors.
             }
@@ -232,13 +266,43 @@ export default function useFaceDetection(enabled = false) {
       }
     }
 
+    /** Extract the highest-confidence phone detection from an ObjectDetector result. */
+    function extractPhone(objectResults) {
+      if (!objectResults || !objectResults.detections) {
+        return { phonePresent: false, phoneConfidence: 0 };
+      }
+      let best = 0;
+      for (const det of objectResults.detections) {
+        const cat = det.categories && det.categories[0];
+        if (cat && cat.categoryName === PHONE_CLASS_NAME && cat.score > best) {
+          best = cat.score;
+        }
+      }
+      return {
+        phonePresent: best >= PHONE_SCORE_THRESHOLD,
+        phoneConfidence: best,
+      };
+    }
+
     /** Process a single detector result and update feature state. */
-    function processFrame(landmarker, video) {
-      const results = landmarker.detectForVideo(video, performance.now());
+    function processFrame(landmarker, objectDetector, video) {
+      const ts = performance.now();
+      const results = landmarker.detectForVideo(video, ts);
+      const objectResults = objectDetector
+        ? objectDetector.detectForVideo(video, ts)
+        : null;
+      const { phonePresent, phoneConfidence } = extractPhone(objectResults);
+
       const hasFace = results.faceLandmarks && results.faceLandmarks.length > 0;
 
       if (!hasFace) {
-        setFeatures({ ...DEFAULT_FEATURES });
+        // Keep phone detection even when the face is gone — the user may
+        // be looking down at the phone just below the camera frame.
+        setFeatures({
+          ...DEFAULT_FEATURES,
+          phonePresent,
+          phoneConfidence: roundTo(phoneConfidence, 3),
+        });
         return;
       }
 
@@ -284,6 +348,8 @@ export default function useFaceDetection(enabled = false) {
         faceConfidence,
         facePresent: true,
         lookingAway,
+        phonePresent,
+        phoneConfidence: roundTo(phoneConfidence, 3),
         browDownLeft: blendshapes.browDownLeft ?? 0,
         browDownRight: blendshapes.browDownRight ?? 0,
         browInnerUp: blendshapes.browInnerUp ?? 0,

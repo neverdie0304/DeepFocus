@@ -124,6 +124,7 @@ export default function DashboardPage() {
       { label: 'Idle time', value: data.distractions.idle },
       { label: 'Face missing', value: data.distractions.face_missing },
       { label: 'Looking away', value: data.distractions.looking_away },
+      { label: 'Phone use', value: data.distractions.phone_use ?? 0 },
     ].filter((d) => d.value > 0).sort((a, b) => b.value - a.value);
   }, [data]);
 

@@ -98,12 +98,28 @@ export default function ReportPage() {
   };
 
   // Breakdown doughnut
-  const focused = Math.max(0, session.duration - session.time_idle - session.time_tab_hidden - session.time_face_missing - session.time_looking_away);
+  const phoneUse = session.time_phone_use ?? 0;
+  const focused = Math.max(
+    0,
+    session.duration
+      - session.time_idle
+      - session.time_tab_hidden
+      - session.time_face_missing
+      - session.time_looking_away
+      - phoneUse,
+  );
   const breakdownData = {
-    labels: ['Focused', 'Idle', 'Tab Hidden', 'Face Missing', 'Looking Away'],
+    labels: ['Focused', 'Idle', 'Tab Hidden', 'Face Missing', 'Looking Away', 'Phone Use'],
     datasets: [{
-      data: [focused, session.time_idle, session.time_tab_hidden, session.time_face_missing, session.time_looking_away],
-      backgroundColor: ['#22c55e', '#eab308', '#ef4444', '#f97316', '#a855f7'],
+      data: [
+        focused,
+        session.time_idle,
+        session.time_tab_hidden,
+        session.time_face_missing,
+        session.time_looking_away,
+        phoneUse,
+      ],
+      backgroundColor: ['#22c55e', '#eab308', '#ef4444', '#f97316', '#a855f7', '#fb923c'],
       borderWidth: 0,
     }],
   };
@@ -120,6 +136,7 @@ export default function ReportPage() {
     { name: 'tab-hidden time', value: session.time_tab_hidden },
     { name: 'face missing', value: session.time_face_missing },
     { name: 'looking away', value: session.time_looking_away },
+    { name: 'phone use', value: phoneUse },
   ].sort((a, b) => b.value - a.value);
 
   const topDistraction = distractions[0];

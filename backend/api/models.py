@@ -59,6 +59,7 @@ class FocusSession(models.Model):
     time_tab_hidden = models.FloatField(default=0)
     time_face_missing = models.FloatField(default=0)
     time_looking_away = models.FloatField(default=0)
+    time_phone_use = models.FloatField(default=0)
 
     note = models.CharField(max_length=NOTE_MAX_LENGTH, blank=True)
     tag = models.CharField(max_length=TAG_MAX_LENGTH, blank=True)
@@ -97,6 +98,7 @@ class SessionEvent(models.Model):
     is_idle = models.BooleanField(default=False)
     is_face_missing = models.BooleanField(default=False)
     is_looking_away = models.BooleanField(default=False)
+    is_phone_present = models.BooleanField(default=False)
 
     # ── Visual (Face Mesh geometry) ──
     head_yaw = models.FloatField(null=True, blank=True)
@@ -107,6 +109,9 @@ class SessionEvent(models.Model):
     gaze_x = models.FloatField(null=True, blank=True)
     gaze_y = models.FloatField(null=True, blank=True)
     face_confidence = models.FloatField(null=True, blank=True)
+
+    # ── Visual (object detection — MediaPipe EfficientDet-Lite0) ──
+    phone_confidence = models.FloatField(null=True, blank=True)
 
     # ── Visual (Face Mesh blendshapes — engagement-relevant subset) ──
     brow_down_left = models.FloatField(null=True, blank=True)

@@ -36,12 +36,15 @@ export default function SessionPage() {
         gazeX: face.gazeX,
         gazeY: face.gazeY,
         faceConfidence: face.faceConfidence,
+        phonePresent: face.phonePresent,
+        phoneConfidence: face.phoneConfidence,
       });
     }
   }, [
     face.facePresent, face.lookingAway, face.headYaw, face.headPitch,
     face.headRoll, face.earLeft, face.earRight, face.gazeX, face.gazeY,
-    face.faceConfidence, session.cameraEnabled,
+    face.faceConfidence, face.phonePresent, face.phoneConfidence,
+    session.cameraEnabled,
   ]);
 
   const handleCameraToggle = (e) => {
@@ -150,6 +153,10 @@ export default function SessionPage() {
               <div className={`flex items-center gap-1.5 ${face.lookingAway ? 'text-yellow-400' : 'text-gray-500'}`}>
                 <span className={`w-2 h-2 rounded-full ${face.lookingAway ? 'bg-yellow-400' : 'bg-gray-600'}`} />
                 {face.lookingAway ? 'Looking Away' : 'Gaze OK'}
+              </div>
+              <div className={`flex items-center gap-1.5 ${face.phonePresent ? 'text-orange-400' : 'text-gray-500'}`}>
+                <span className={`w-2 h-2 rounded-full ${face.phonePresent ? 'bg-orange-400' : 'bg-gray-600'}`} />
+                {face.phonePresent ? 'Phone Detected' : 'No Phone'}
               </div>
             </>
           )}

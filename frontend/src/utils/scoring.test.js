@@ -32,6 +32,14 @@ describe('computeFocusScore (rule-based)', () => {
       expect(score).toBe(65);
     });
 
+    it('subtracts 45 for phone present', () => {
+      const score = computeFocusScore({
+        isIdle: false, isFaceMissing: false, isLookingAway: false,
+        isPhonePresent: true, cameraEnabled: true,
+      });
+      expect(score).toBe(55);
+    });
+
     it('subtracts 15 for idle', () => {
       const score = computeFocusScore({
         isIdle: true, isFaceMissing: false, isLookingAway: false, cameraEnabled: true,
@@ -39,16 +47,19 @@ describe('computeFocusScore (rule-based)', () => {
       expect(score).toBe(85);
     });
 
-    it('stacks all penalties', () => {
+    it('stacks all penalties and clamps at zero', () => {
       const score = computeFocusScore({
-        isIdle: true, isFaceMissing: true, isLookingAway: true, cameraEnabled: true,
+        isIdle: true, isFaceMissing: true, isLookingAway: true,
+        isPhonePresent: true, cameraEnabled: true,
       });
-      expect(score).toBe(0); // 100 - 50 - 35 - 15 = 0
+      // 100 - 50 - 45 - 35 - 15 = -45 → clamp to 0
+      expect(score).toBe(0);
     });
 
     it('clamps at zero (cannot go negative)', () => {
       const score = computeFocusScore({
-        isIdle: true, isFaceMissing: true, isLookingAway: true, cameraEnabled: true,
+        isIdle: true, isFaceMissing: true, isLookingAway: true,
+        isPhonePresent: true, cameraEnabled: true,
       });
       expect(score).toBeGreaterThanOrEqual(0);
     });
@@ -71,7 +82,8 @@ describe('computeFocusScore (rule-based)', () => {
 
     it('ignores visual signals when camera disabled', () => {
       const score = computeFocusScore({
-        isIdle: false, isFaceMissing: true, isLookingAway: true, cameraEnabled: false,
+        isIdle: false, isFaceMissing: true, isLookingAway: true,
+        isPhonePresent: true, cameraEnabled: false,
       });
       expect(score).toBe(100);
     });
@@ -89,11 +101,12 @@ describe('computeFocusScore (rule-based)', () => {
 });
 
 describe('assembleFeatureVector', () => {
-  it('returns all 31 named feature keys', () => {
+  it('returns all 32 named feature keys', () => {
     const vector = assembleFeatureVector({});
     const expectedKeys = [
       'head_yaw', 'head_pitch', 'head_roll',
       'ear_left', 'ear_right', 'gaze_x', 'gaze_y', 'face_confidence',
+      'phone_confidence',
       'brow_down_left', 'brow_down_right', 'brow_inner_up',
       'eye_squint_left', 'eye_squint_right', 'eye_wide_left', 'eye_wide_right',
       'jaw_open', 'mouth_frown_left', 'mouth_frown_right',
@@ -107,6 +120,18 @@ describe('assembleFeatureVector', () => {
     for (const key of expectedKeys) {
       expect(vector).toHaveProperty(key);
     }
+  });
+
+  it('maps phone_confidence from faceFeatures', () => {
+    const vector = assembleFeatureVector({
+      faceFeatures: { phoneConfidence: 0.72 },
+    });
+    expect(vector.phone_confidence).toBe(0.72);
+  });
+
+  it('defaults phone_confidence to 0 when not provided', () => {
+    const vector = assembleFeatureVector({});
+    expect(vector.phone_confidence).toBe(0);
   });
 
   it('does not include camera_enabled in the output', () => {

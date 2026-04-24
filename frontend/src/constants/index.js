@@ -36,8 +36,17 @@ export const MIN_BURST_LENGTH = 3;         // 3 samples × 2s = 6s
 
 // ── Rule-based scoring penalties (camera on) ──
 export const PENALTY_FACE_MISSING = 50;
+export const PENALTY_PHONE_USE = 45;
 export const PENALTY_LOOKING_AWAY = 35;
 export const PENALTY_IDLE = 15;
+
+// ── Object detection (MediaPipe EfficientDet-Lite0) ──
+// COCO "cell phone" class. Score threshold chosen conservatively: the
+// model is biased toward high-recall detection on the COCO validation
+// set, so 0.4 suppresses the most common false positives (book spines,
+// dark rectangular objects) without losing obvious phones.
+export const PHONE_SCORE_THRESHOLD = 0.4;
+export const PHONE_CLASS_NAME = 'cell phone';
 
 // ── Rule-based scoring penalties (camera off) ──
 export const PENALTY_IDLE_CAMERA_OFF = 100;
@@ -60,6 +69,8 @@ export const TASK_TYPES = [
 // ── MediaPipe model CDN ──
 export const FACE_LANDMARKER_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-assets/face_landmarker_v2_with_blendshapes.task';
+export const OBJECT_DETECTOR_MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite';
 export const MEDIAPIPE_WASM_URL =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 

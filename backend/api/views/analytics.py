@@ -56,6 +56,7 @@ class WeeklyAnalyticsView(APIView):
             total_tab_hidden=Sum("time_tab_hidden"),
             total_face_missing=Sum("time_face_missing"),
             total_looking_away=Sum("time_looking_away"),
+            total_phone_use=Sum("time_phone_use"),
         )
 
         daily = self._daily_breakdown(sessions, start_of_week)
@@ -76,6 +77,7 @@ class WeeklyAnalyticsView(APIView):
                 "tab_hidden": totals["total_tab_hidden"] or 0,
                 "face_missing": totals["total_face_missing"] or 0,
                 "looking_away": totals["total_looking_away"] or 0,
+                "phone_use": totals["total_phone_use"] or 0,
             },
             "daily": daily,
             "heatmap": heatmap,

@@ -19,6 +19,7 @@ import {
   PENALTY_IDLE,
   PENALTY_IDLE_CAMERA_OFF,
   PENALTY_LOOKING_AWAY,
+  PENALTY_PHONE_USE,
   PITCH_THRESHOLD_DEG,
   YAW_THRESHOLD_DEG,
 } from '../constants';
@@ -29,6 +30,7 @@ import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
  * @property {boolean} isIdle
  * @property {boolean} isFaceMissing
  * @property {boolean} isLookingAway
+ * @property {boolean} isPhonePresent
  * @property {boolean} cameraEnabled
  */
 
@@ -43,10 +45,17 @@ import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
  * @param {RuleBasedInput} signals
  * @returns {number}
  */
-export function computeFocusScore({ isIdle, isFaceMissing, isLookingAway, cameraEnabled }) {
+export function computeFocusScore({
+  isIdle,
+  isFaceMissing,
+  isLookingAway,
+  isPhonePresent,
+  cameraEnabled,
+}) {
   if (cameraEnabled) {
     let score = 100;
     if (isFaceMissing) score -= PENALTY_FACE_MISSING;
+    if (isPhonePresent) score -= PENALTY_PHONE_USE;
     if (isLookingAway) score -= PENALTY_LOOKING_AWAY;
     if (isIdle) score -= PENALTY_IDLE;
     return Math.max(0, score);
@@ -87,6 +96,9 @@ export function assembleFeatureVector({
     gaze_x: faceFeatures.gazeX ?? null,
     gaze_y: faceFeatures.gazeY ?? null,
     face_confidence: faceFeatures.faceConfidence ?? null,
+
+    // ── Visual (object detection) ──
+    phone_confidence: faceFeatures.phoneConfidence ?? 0,
 
     // ── Visual (blendshapes) ──
     brow_down_left: faceFeatures.browDownLeft ?? 0,
@@ -149,10 +161,17 @@ export async function computeFocusScoreML(featureVector, scalerParams = null) {
     featureVector.head_yaw !== null
     && (Math.abs(featureVector.head_yaw) > YAW_THRESHOLD_DEG
       || Math.abs(featureVector.head_pitch) > PITCH_THRESHOLD_DEG);
+  const isPhonePresent = (featureVector.phone_confidence ?? 0) > 0;
   const isIdle = featureVector.idle_duration > 15;
   const cameraEnabled = featureVector.face_confidence !== null;
 
-  return computeFocusScore({ isIdle, isFaceMissing, isLookingAway, cameraEnabled });
+  return computeFocusScore({
+    isIdle,
+    isFaceMissing,
+    isLookingAway,
+    isPhonePresent,
+    cameraEnabled,
+  });
 }
 
 /**

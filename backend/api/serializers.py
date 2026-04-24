@@ -63,9 +63,12 @@ _SESSION_EVENT_FIELDS = (
     "id", "timestamp", "focus_score",
     # Legacy boolean signals
     "is_tab_hidden", "is_idle", "is_face_missing", "is_looking_away",
+    "is_phone_present",
     # Visual (geometry)
     "head_yaw", "head_pitch", "head_roll",
     "ear_left", "ear_right", "gaze_x", "gaze_y", "face_confidence",
+    # Visual (object detection)
+    "phone_confidence",
     # Visual (blendshapes)
     "brow_down_left", "brow_down_right", "brow_inner_up",
     "eye_squint_left", "eye_squint_right", "eye_wide_left", "eye_wide_right",
@@ -135,7 +138,7 @@ class FocusSessionDetailSerializer(serializers.ModelSerializer):
         fields = (
             "id", "start_time", "end_time", "duration", "mode",
             "focus_score_final", "time_idle", "time_tab_hidden",
-            "time_face_missing", "time_looking_away",
+            "time_face_missing", "time_looking_away", "time_phone_use",
             "note", "tag", "events",
         )
 
@@ -166,7 +169,7 @@ class FocusSessionUpdateSerializer(serializers.ModelSerializer):
         fields = (
             "end_time", "duration", "focus_score_final",
             "time_idle", "time_tab_hidden",
-            "time_face_missing", "time_looking_away",
+            "time_face_missing", "time_looking_away", "time_phone_use",
             "note", "tag",
         )
 
