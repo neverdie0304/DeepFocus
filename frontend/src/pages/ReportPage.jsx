@@ -17,16 +17,26 @@ import { formatDuration, formatTime } from '../utils/scoring';
 
 const SAMPLE_SECONDS = 2;
 
+// Distraction categories shown in the breakdown. Tab-hidden and tab-
+// level idle are intentionally excluded: the Page Visibility API and
+// window-scoped input listeners can only observe the DeepFocus tab, so
+// a user typing productively in another tab or native app looks
+// identical to a user who has walked away. Counting those states as
+// distractions would penalise normal workflows. The webcam-derived
+// signals, by contrast, keep working regardless of tab focus.
 const DISTRACTION_META = [
   { key: 'phone_use',     label: 'Phone Use',       color: '#fb923c', emoji: '📱' },
   { key: 'face_missing',  label: 'Away from Desk',  color: '#f97316', emoji: '🚶' },
   { key: 'looking_away',  label: 'Looking Away',    color: '#a855f7', emoji: '👀' },
-  { key: 'idle',          label: 'Idle',            color: '#eab308', emoji: '😴' },
-  { key: 'tab_hidden',    label: 'Tab Switched',    color: '#ef4444', emoji: '🗂️' },
 ];
 
 /**
  * Compute accurate "locked in" seconds from per-event flags.
+ *
+ * Only webcam-observable states count as not-locked-in: face missing,
+ * looking away, or phone present. Tab-level idle and tab_hidden are
+ * excluded — they trigger whenever the user works in any other tab or
+ * application, not only when they are genuinely distracted.
  *
  * Using ``duration - sum(time_*)`` would double-count samples where
  * multiple flags fire at once (e.g. phone + looking away when a user
@@ -36,9 +46,7 @@ const DISTRACTION_META = [
 function computeLockedInSeconds(events) {
   if (!events || events.length === 0) return 0;
   const clean = events.filter((e) => (
-    !e.is_idle
-      && !e.is_tab_hidden
-      && !e.is_face_missing
+    !e.is_face_missing
       && !e.is_looking_away
       && !e.is_phone_present
   ));
@@ -137,8 +145,6 @@ export default function ReportPage() {
   const lockedInPct = Math.min(100, Math.max(0, (lockedIn / duration) * 100));
 
   const distractionTotals = {
-    idle: session.time_idle,
-    tab_hidden: session.time_tab_hidden,
     face_missing: session.time_face_missing,
     looking_away: session.time_looking_away,
     phone_use: phoneUse,
@@ -150,6 +156,15 @@ export default function ReportPage() {
     .map((m) => ({ ...m, value: distractionTotals[m.key] || 0 }))
     .filter((d) => d.value > 0.5)  // half a second noise floor
     .sort((a, b) => b.value - a.value);
+
+  // Informational signals — shown separately from distractions because
+  // they can't distinguish productive external work from genuine
+  // disengagement (see DISTRACTION_META comment above).
+  const tabSwitchCount = events.reduce((acc, e, i) => {
+    if (i === 0) return 0;
+    return acc + (e.is_tab_hidden && !events[i - 1].is_tab_hidden ? 1 : 0);
+  }, 0);
+  const tabHiddenSeconds = session.time_tab_hidden || 0;
 
   // Breakdown doughnut — kept as a visual overview alongside the list.
   const breakdownData = {
@@ -250,6 +265,32 @@ export default function ReportPage() {
         ) : (
           <div className="pt-4 border-t border-gray-800 text-center text-sm text-gray-500">
             No distractions recorded — full focus from start to end.
+          </div>
+        )}
+
+        {/* Activity info — tab switches are not scored against focus
+            (cannot distinguish productive external work from
+            distraction), shown here as context for the user. */}
+        {(tabSwitchCount > 0 || tabHiddenSeconds > 1) && (
+          <div className="pt-4 border-t border-gray-800 space-y-2">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-3">
+              Outside This Tab
+            </p>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">Tab switches</span>
+              <span className="text-gray-400 font-mono tabular-nums">
+                {tabSwitchCount}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">Time in other tabs / apps</span>
+              <span className="text-gray-400 font-mono tabular-nums">
+                {formatDuration(tabHiddenSeconds)}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 pt-2">
+              Not counted against focus — you may have been working productively elsewhere.
+            </p>
           </div>
         )}
       </div>
