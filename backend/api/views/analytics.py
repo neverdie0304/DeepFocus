@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import date as dt_date, timedelta
 
-from django.db.models import Avg, Count, Sum
+from django.db.models import Avg, Count, F, FloatField, Q, Sum  # noqa: F401 — Avg used by heatmap
 from django.db.models.functions import ExtractHour, TruncDate
 from django.utils import timezone
 from rest_framework.response import Response
@@ -48,9 +48,12 @@ class WeeklyAnalyticsView(APIView):
             end_time__isnull=False,
         )
 
+        # avg_score is duration-weighted: a ten-second session should not
+        # pull the weekly average as hard as an hour-long one. Django has
+        # no built-in weighted Avg, so we compute sum(duration * score)
+        # and divide by the total duration of scored sessions below.
         totals = sessions.aggregate(
             total_sessions=Count("id"),
-            avg_score=Avg("focus_score_final"),
             total_duration=Sum("duration"),
             total_idle=Sum("time_idle"),
             total_tab_hidden=Sum("time_tab_hidden"),
@@ -58,6 +61,25 @@ class WeeklyAnalyticsView(APIView):
             total_looking_away=Sum("time_looking_away"),
             total_phone_use=Sum("time_phone_use"),
         )
+
+        # Compute the weighted average over scored sessions only: a
+        # null focus_score_final should not affect the numerator or the
+        # denominator (otherwise its duration would pull the average
+        # toward zero implicitly).
+        weighted = (
+            sessions.exclude(focus_score_final=None)
+            .aggregate(
+                num=Sum(
+                    F("duration") * F("focus_score_final"),
+                    output_field=FloatField(),
+                ),
+                den=Sum("duration"),
+            )
+        )
+        if weighted["den"] and weighted["den"] > 0:
+            avg_score = round(weighted["num"] / weighted["den"], 1)
+        else:
+            avg_score = None
 
         daily = self._daily_breakdown(sessions, start_of_week)
         heatmap = self._hourly_heatmap(
@@ -68,9 +90,7 @@ class WeeklyAnalyticsView(APIView):
             "week_start": start_of_week.isoformat(),
             "week_end": end_of_week.isoformat(),
             "total_sessions": totals["total_sessions"],
-            "avg_score": (
-                round(totals["avg_score"], 1) if totals["avg_score"] else None
-            ),
+            "avg_score": avg_score,
             "total_duration": totals["total_duration"] or 0,
             "distractions": {
                 "idle": totals["total_idle"] or 0,
@@ -98,6 +118,12 @@ class WeeklyAnalyticsView(APIView):
 
         Uses ``TruncDate('start_time')`` to bucket sessions by calendar date
         and ``GROUP BY`` in the database rather than looping in Python.
+
+        ``avg_score`` is duration-weighted per day for the same reason it
+        is at the top level: a ten-second session should not pull the
+        daily average as hard as an hour-long one. The weighted
+        denominator excludes sessions without a final score so a null
+        does not drag the average toward zero.
         """
         rows = (
             sessions
@@ -105,8 +131,15 @@ class WeeklyAnalyticsView(APIView):
             .values("day")
             .annotate(
                 count=Count("id"),
-                avg_score=Avg("focus_score_final"),
                 total_duration=Sum("duration"),
+                weighted_score_num=Sum(
+                    F("duration") * F("focus_score_final"),
+                    output_field=FloatField(),
+                ),
+                scored_duration=Sum(
+                    "duration",
+                    filter=~Q(focus_score_final=None),
+                ),
             )
         )
         by_day = {row["day"]: row for row in rows}
@@ -115,10 +148,16 @@ class WeeklyAnalyticsView(APIView):
         for i in range(DAYS_IN_WEEK):
             day = start_of_week + timedelta(days=i)
             row = by_day.get(day)
+            if row and row["scored_duration"] and row["scored_duration"] > 0:
+                avg_score = round(
+                    (row["weighted_score_num"] or 0) / row["scored_duration"], 1,
+                )
+            else:
+                avg_score = None
             daily.append({
                 "date": day.isoformat(),
                 "sessions": row["count"] if row else 0,
-                "avg_score": row["avg_score"] if row else None,
+                "avg_score": avg_score,
                 "total_duration": row["total_duration"] if row else 0,
             })
         return daily

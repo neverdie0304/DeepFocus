@@ -44,11 +44,42 @@ class WeeklyAnalyticsTests(APITestCase):
         self.assertEqual(response.data["total_duration"], 0)
 
     def test_aggregate_totals(self):
+        # Two sessions, different durations. avg_score is
+        # duration-weighted: (600*70 + 1200*90) / 1800 = 83.33.
         self._make_session(days_ago=1, duration=600, score=70)
         self._make_session(days_ago=2, duration=1200, score=90)
         response = self.client.get(self.url)
         self.assertEqual(response.data["total_sessions"], 2)
         self.assertEqual(response.data["total_duration"], 1800)
+        self.assertAlmostEqual(response.data["avg_score"], 83.3, places=1)
+
+    def test_avg_score_is_weighted_by_duration(self):
+        # A very short session with a low score should not pull the
+        # average as hard as a long high-score session. Here a 10s / 60
+        # session next to a 3600s / 90 session weighs as
+        # (10*60 + 3600*90) / 3610 = 89.917.
+        self._make_session(days_ago=1, duration=10, score=60)
+        self._make_session(days_ago=2, duration=3600, score=90)
+        response = self.client.get(self.url)
+        self.assertAlmostEqual(response.data["avg_score"], 89.9, places=1)
+
+    def test_avg_score_is_null_for_empty_week(self):
+        response = self.client.get(self.url)
+        self.assertIsNone(response.data["avg_score"])
+
+    def test_avg_score_ignores_sessions_without_final_score(self):
+        # A completed session with a null focus_score_final (e.g. the
+        # client failed to write one) should neither lift nor depress
+        # the weighted average — it is excluded from the denominator.
+        self._make_session(days_ago=1, duration=600, score=80)
+        FocusSession.objects.create(
+            user=self.user,
+            start_time=self.now - timedelta(days=2),
+            end_time=self.now - timedelta(days=2) + timedelta(seconds=3000),
+            duration=3000,
+            focus_score_final=None,
+        )
+        response = self.client.get(self.url)
         self.assertAlmostEqual(response.data["avg_score"], 80.0, places=1)
 
     def test_distractions_summed(self):

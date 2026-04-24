@@ -16,6 +16,8 @@ import {
   CAMERA_HEIGHT,
   CAMERA_WIDTH,
   FACE_LANDMARKER_MODEL_URL,
+  FACE_SMOOTHING_THRESHOLD,
+  FACE_SMOOTHING_WINDOW,
   FRAME_INTERVAL_MS,
   MEDIAPIPE_WASM_URL,
   OBJECT_DETECTOR_MODEL_URL,
@@ -130,6 +132,15 @@ export default function useFaceDetection(enabled = false) {
   const objectDetectorRef = useRef(null);
   const rafRef = useRef(null);
   const lastProcessRef = useRef(0);
+  // Rolling window of the last few face-detection outcomes. Raw per-
+  // frame detection is noisy in real rooms: an empty chair or wall
+  // shadow will occasionally trip a single-frame false positive, and a
+  // genuinely-present user will occasionally miss a single frame during
+  // motion blur or head rotation. A majority vote over the last
+  // FACE_SMOOTHING_WINDOW frames gives a far more stable ``facePresent``
+  // flag at the cost of a short (~500 ms at 10 Hz) latency before the
+  // state transitions.
+  const faceWindowRef = useRef([]);
 
   const stopCamera = useCallback(() => {
     if (rafRef.current) {
@@ -154,6 +165,7 @@ export default function useFaceDetection(enabled = false) {
       videoRef.current.remove();
       videoRef.current = null;
     }
+    faceWindowRef.current = [];
     setCameraReady(false);
   }, []);
 
@@ -216,6 +228,13 @@ export default function useFaceDetection(enabled = false) {
           numFaces: 1,
           outputFaceBlendshapes: true,
           outputFacialTransformationMatrixes: true,
+          // Defaults are 0.5 on all three; bumping to 0.6 reduces the
+          // pareidolia false positives (empty chairs, shadowed walls)
+          // that caused ``facePresent`` to stay true during long
+          // away-from-desk periods and so under-counted face_missing.
+          minFaceDetectionConfidence: 0.6,
+          minFacePresenceConfidence: 0.6,
+          minTrackingConfidence: 0.6,
         });
         if (cancelled) { landmarker.close(); stopCamera(); return; }
         landmarkerRef.current = landmarker;
@@ -284,6 +303,24 @@ export default function useFaceDetection(enabled = false) {
       };
     }
 
+    /**
+     * Update the rolling window of recent face-detection outcomes and
+     * decide whether the smoothed state is "face present."
+     *
+     * Real-world detection is noisy. Empty rooms trip single-frame
+     * false positives (a shadow or a high-contrast object passes the
+     * detector's threshold) and present users occasionally drop a
+     * frame (motion blur, head rotation). Voting over the last
+     * FACE_SMOOTHING_WINDOW outcomes suppresses both directions.
+     */
+    function updateFaceWindow(rawHasFace) {
+      const win = faceWindowRef.current;
+      win.push(rawHasFace);
+      if (win.length > FACE_SMOOTHING_WINDOW) win.shift();
+      const positives = win.filter(Boolean).length;
+      return positives / win.length >= FACE_SMOOTHING_THRESHOLD;
+    }
+
     /** Process a single detector result and update feature state. */
     function processFrame(landmarker, objectDetector, video) {
       const ts = performance.now();
@@ -293,9 +330,10 @@ export default function useFaceDetection(enabled = false) {
         : null;
       const { phonePresent, phoneConfidence } = extractPhone(objectResults);
 
-      const hasFace = results.faceLandmarks && results.faceLandmarks.length > 0;
+      const rawHasFace = results.faceLandmarks && results.faceLandmarks.length > 0;
+      const smoothedHasFace = updateFaceWindow(rawHasFace);
 
-      if (!hasFace) {
+      if (!smoothedHasFace) {
         // Keep phone detection even when the face is gone — the user may
         // be looking down at the phone just below the camera frame.
         setFeatures({
@@ -303,6 +341,14 @@ export default function useFaceDetection(enabled = false) {
           phonePresent,
           phoneConfidence: roundTo(phoneConfidence, 3),
         });
+        return;
+      }
+
+      // The smoothed window says face is present. If this specific
+      // frame missed the detection, keep the last good feature values
+      // rather than emitting zero pose/EAR — they would flood the ML
+      // pipeline with synthetic "looking forward" samples.
+      if (!rawHasFace) {
         return;
       }
 

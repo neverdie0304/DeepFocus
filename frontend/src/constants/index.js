@@ -16,6 +16,16 @@ export const PERIODIC_UPLOAD_INTERVAL_MS = 30_000;  // Flush buffered events eve
 // ── Vision (MediaPipe Face Mesh) ──
 export const VISION_FPS = 10;
 export const FRAME_INTERVAL_MS = 1000 / VISION_FPS;
+// Size of the rolling window over which face-detection outcomes are
+// smoothed. Per-frame detection is noisy enough that a 2-second
+// sample will occasionally catch a false-positive "face" frame from a
+// background object (empty chair, wall shadow) while the user is
+// genuinely absent. A majority vote over the last few frames gives a
+// far more honest "face present / missing" signal at the cost of a
+// ~500 ms latency before the state transitions.
+export const FACE_SMOOTHING_WINDOW = 5;   // 500 ms at 10 Hz
+export const FACE_SMOOTHING_THRESHOLD = 0.5;  // majority
+
 export const YAW_THRESHOLD_DEG = 25;      // Beyond this, treat as "looking away"
 // Pitch is split into two thresholds because looking up and looking down
 // carry different meanings. Looking up past ~20° almost always indicates
