@@ -196,6 +196,12 @@ export async function computeFocusScoreML(featureVector, scalerParams = null) {
  *     or working a problem on paper, all of which are the point of the
  *     session.
  *
+ * Sign convention — MediaPipe's facialTransformationMatrix yields
+ * POSITIVE pitch when the user looks DOWN (chin toward chest) and
+ * NEGATIVE pitch when they look UP. This was verified empirically:
+ * an earlier implementation assumed the opposite and flagged every
+ * "looking down at notebook" frame as looking_away for tolerant tasks.
+ *
  * Known limitation (see thesis §3.5.5): for down-tolerant tasks, a user
  * scrolling a phone in their lap produces the same head pose as a user
  * reading from a desk. Phone-in-frame detection partially covers this;
@@ -203,7 +209,7 @@ export async function computeFocusScoreML(featureVector, scalerParams = null) {
  * pose alone.
  *
  * @param {number|null} yaw - Head yaw in degrees; null when no face is detected.
- * @param {number|null} pitch - Head pitch in degrees (positive = up, negative = down).
+ * @param {number|null} pitch - Head pitch in degrees (positive = looking down, negative = looking up).
  * @param {string} taskType - One of the TASK_TYPES value strings.
  * @returns {boolean}
  */
@@ -212,9 +218,12 @@ export function isLookingAwayForTask(yaw, pitch, taskType) {
     return false;
   }
   if (Math.abs(yaw) > YAW_THRESHOLD_DEG) return true;
-  if (pitch > PITCH_UP_THRESHOLD_DEG) return true;
+  // Looking up (negative pitch past threshold) is always off-task.
+  if (pitch < -PITCH_UP_THRESHOLD_DEG) return true;
+  // Looking down (positive pitch past threshold) is off-task unless
+  // the session legitimately involves work below the screen.
   if (DOWN_TOLERANT_TASKS.has(taskType)) return false;
-  return pitch < -PITCH_UP_THRESHOLD_DEG;
+  return pitch > PITCH_UP_THRESHOLD_DEG;
 }
 
 /**

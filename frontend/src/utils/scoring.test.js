@@ -525,68 +525,70 @@ describe('isLookingAwayForTask', () => {
     });
   });
 
-  describe('pitch up (always flagged regardless of task)', () => {
+  // MediaPipe convention: positive pitch = looking DOWN, negative
+  // pitch = looking UP. Tests below use the convention explicitly.
+  describe('pitch up (negative pitch, always flagged)', () => {
     it('flags looking up past threshold for coding', () => {
-      expect(isLookingAwayForTask(0, 35, 'coding')).toBe(true);
+      expect(isLookingAwayForTask(0, -35, 'coding')).toBe(true);
     });
 
     it('flags looking up past threshold for study', () => {
-      expect(isLookingAwayForTask(0, 35, 'study')).toBe(true);
+      expect(isLookingAwayForTask(0, -35, 'study')).toBe(true);
     });
 
     it('flags looking up for every task type', () => {
       for (const t of ['coding', 'writing', 'reading', 'video', 'study', 'other']) {
-        expect(isLookingAwayForTask(0, 35, t)).toBe(true);
+        expect(isLookingAwayForTask(0, -35, t)).toBe(true);
       }
     });
 
-    it('boundary: 20° pitch up is not looking away', () => {
-      expect(isLookingAwayForTask(0, 20, 'coding')).toBe(false);
+    it('boundary: −20° pitch is not looking away', () => {
+      expect(isLookingAwayForTask(0, -20, 'coding')).toBe(false);
     });
 
-    it('boundary: 20.1° pitch up is looking away', () => {
-      expect(isLookingAwayForTask(0, 20.1, 'coding')).toBe(true);
+    it('boundary: −20.1° pitch is looking away', () => {
+      expect(isLookingAwayForTask(0, -20.1, 'coding')).toBe(true);
     });
   });
 
-  describe('pitch down on non-tolerant tasks', () => {
+  describe('pitch down (positive pitch) on non-tolerant tasks', () => {
     it('flags looking down past threshold for coding', () => {
-      expect(isLookingAwayForTask(0, -35, 'coding')).toBe(true);
+      expect(isLookingAwayForTask(0, 35, 'coding')).toBe(true);
     });
 
     it('flags looking down past threshold for video', () => {
-      expect(isLookingAwayForTask(0, -35, 'video')).toBe(true);
+      expect(isLookingAwayForTask(0, 35, 'video')).toBe(true);
     });
 
     it('flags looking down past threshold for other', () => {
-      expect(isLookingAwayForTask(0, -35, 'other')).toBe(true);
+      expect(isLookingAwayForTask(0, 35, 'other')).toBe(true);
     });
   });
 
-  describe('pitch down on tolerant tasks (study, reading, writing)', () => {
+  describe('pitch down (positive pitch) on tolerant tasks (study, reading, writing)', () => {
     it('does NOT flag looking down for study (notebook work)', () => {
-      expect(isLookingAwayForTask(0, -35, 'study')).toBe(false);
+      expect(isLookingAwayForTask(0, 35, 'study')).toBe(false);
     });
 
     it('does NOT flag looking down for reading (physical book)', () => {
-      expect(isLookingAwayForTask(0, -35, 'reading')).toBe(false);
+      expect(isLookingAwayForTask(0, 35, 'reading')).toBe(false);
     });
 
     it('does NOT flag looking down for writing (handwriting on paper)', () => {
-      expect(isLookingAwayForTask(0, -35, 'writing')).toBe(false);
+      expect(isLookingAwayForTask(0, 35, 'writing')).toBe(false);
     });
 
     it('does NOT flag extreme looking down for study', () => {
-      expect(isLookingAwayForTask(0, -80, 'study')).toBe(false);
+      expect(isLookingAwayForTask(0, 80, 'study')).toBe(false);
     });
 
     it('still flags sideways turn while looking down', () => {
       // Yaw check fires before pitch-down suppression.
-      expect(isLookingAwayForTask(40, -35, 'study')).toBe(true);
+      expect(isLookingAwayForTask(40, 35, 'study')).toBe(true);
     });
 
-    it('still flags looking up for tolerant tasks', () => {
-      expect(isLookingAwayForTask(0, 35, 'study')).toBe(true);
+    it('still flags looking up (negative pitch) for tolerant tasks', () => {
+      expect(isLookingAwayForTask(0, -35, 'study')).toBe(true);
     });
   });
 
@@ -609,7 +611,7 @@ describe('isLookingAwayForTask', () => {
       // Unknown task types should be treated conservatively — if a user
       // somehow sends a task the system doesn't know, we err on the side
       // of flagging extreme pitches.
-      expect(isLookingAwayForTask(0, -35, 'unknown-task')).toBe(true);
+      expect(isLookingAwayForTask(0, 35, 'unknown-task')).toBe(true);
     });
   });
 });

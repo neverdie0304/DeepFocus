@@ -37,8 +37,12 @@ export const YAW_THRESHOLD_DEG = 25;      // Beyond this, treat as "looking away
 // sessions. DOWN_TOLERANT_TASKS below controls when pitch-down is
 // suppressed; pitch-up is always checked.
 //
-// Sign convention (verified empirically via SessionPage's pitch readout):
-// positive pitch = looking up, negative pitch = looking down.
+// Sign convention (verified empirically via a pilot test where "고개
+// 숙임" — looking down at a notebook — was producing positive pitch
+// values and being flagged under an earlier "positive = up" assumption
+// that was exactly backward). MediaPipe's facialTransformationMatrix
+// yields: POSITIVE pitch = looking down (chin toward chest),
+// NEGATIVE pitch = looking up (chin away from chest).
 export const PITCH_UP_THRESHOLD_DEG = 20;
 // Retained for the ML-fallback scorer only (scoring.js::computeFocusScoreML),
 // which cannot access the task type. A symmetric threshold there is the
