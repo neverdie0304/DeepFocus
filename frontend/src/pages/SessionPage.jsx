@@ -5,6 +5,7 @@ import useFaceDetection from '../hooks/useFaceDetection';
 import FocusGauge from '../components/FocusGauge';
 import CameraConsent from '../components/CameraConsent';
 import ESMPopup from '../components/ESMPopup';
+import { INPUT_REQUIRED_TASKS } from '../constants';
 import { formatTime } from '../utils/scoring';
 
 export default function SessionPage() {
@@ -88,6 +89,20 @@ export default function SessionPage() {
   const isRunning = session.status === 'running';
   const isPaused = session.status === 'paused';
 
+  // The Idle Detection API gives us system-wide activity detection
+  // (vs tab-scope event listeners). For input-required tasks the idle
+  // signal is load-bearing: without it we cannot tell "coding in
+  // VSCode" apart from "asleep at the keyboard." A warning is shown
+  // when either the browser lacks the API or the user declined.
+  const idle = session.idleDetection || { supported: false, permission: null };
+  const taskNeedsInput = INPUT_REQUIRED_TASKS.has(session.taskType);
+  const idleDegraded = taskNeedsInput && (!idle.supported || idle.permission === 'denied');
+  const idleWarning = !idle.supported
+    ? 'Your browser does not support Idle Detection (Chrome, Edge, or Safari 17+ recommended). Focus scoring for coding and writing will be less accurate — typing in other apps cannot be detected.'
+    : idle.permission === 'denied'
+      ? 'Idle detection permission was declined. Focus scoring for coding and writing will be less accurate — typing in other apps cannot be detected. Enable it in your browser site settings to fix.'
+      : null;
+
   // Shown while endSession() is running its uploads. Takes priority
   // over isIdle so the task-type UI never flashes during shutdown.
   if (session.ending) {
@@ -103,6 +118,13 @@ export default function SessionPage() {
     <div className="flex flex-col items-center gap-8 py-8">
       {showConsent && (
         <CameraConsent onAccept={handleConsentAccept} onDecline={handleConsentDecline} />
+      )}
+
+      {idleDegraded && idleWarning && (
+        <div className="w-full max-w-xl bg-yellow-900/30 border border-yellow-700/50 text-yellow-200 rounded-lg px-4 py-3 text-sm">
+          <p className="font-medium mb-1">⚠️ Reduced accuracy for {session.taskType}</p>
+          <p className="text-yellow-300/90 text-xs leading-relaxed">{idleWarning}</p>
+        </div>
       )}
 
       {/* Timer */}

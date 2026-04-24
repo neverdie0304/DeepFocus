@@ -2,16 +2,18 @@
  * useBehaviourSignals
  *
  * Aggregates user input events (keyboard, mouse, scroll, touch) into
- * continuous behavioural features over a 30-second sliding window. Exposes
- * both the new continuous features (keystroke_rate, mouse_velocity, etc.)
- * and the legacy boolean flags (``isTabHidden``, ``isIdle``) that the rest
- * of the system still consumes.
+ * continuous behavioural features over a 30-second sliding window.
+ * Tab-level idle detection has been removed in favour of the W3C Idle
+ * Detection API (see ``useIdleDetection``), which reports system-wide
+ * inactivity rather than inactivity on the DeepFocus tab alone. The
+ * continuous ``idleDuration`` feature — seconds since the last event
+ * hitting this tab — is retained as an ML input because it remains a
+ * useful proxy for tab-scope engagement.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   BEHAVIOUR_WINDOW_SECONDS,
-  IDLE_TIMEOUT_MS,
   SAMPLE_INTERVAL_MS,
 } from '../constants';
 import {
@@ -26,14 +28,13 @@ const RING_SLOTS = Math.ceil(BEHAVIOUR_WINDOW_SECONDS / (SAMPLE_INTERVAL_MS / 10
 /**
  * @typedef {Object} BehaviourSignals
  * @property {boolean} isTabHidden
- * @property {boolean} isIdle
  * @property {number} activityCount - Activity events in the last sample.
  * @property {number} keystrokeRate - Keys per second over the sliding window.
  * @property {number} mouseVelocity - Pixels per second over the sliding window.
  * @property {number} mouseDistance - Total pixels travelled in the window.
  * @property {number} clickRate - Clicks per second.
  * @property {number} scrollRate - Scroll events per second.
- * @property {number} idleDuration - Continuous seconds since last input.
+ * @property {number} idleDuration - Continuous seconds since last input to this tab.
  * @property {number} activityLevel - Normalised 0-1 composite.
  */
 
@@ -43,9 +44,7 @@ const RING_SLOTS = Math.ceil(BEHAVIOUR_WINDOW_SECONDS / (SAMPLE_INTERVAL_MS / 10
  * @returns {BehaviourSignals}
  */
 export default function useBehaviourSignals(active = false) {
-  // Backward-compatible boolean state.
   const [isTabHidden, setIsTabHidden] = useState(false);
-  const [isIdle, setIsIdle] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
 
   // Continuous feature state.
@@ -60,7 +59,6 @@ export default function useBehaviourSignals(active = false) {
   });
 
   // Refs for real-time counters (avoid re-renders on every event).
-  const idleTimerRef = useRef(null);
   const activityRef = useRef(0);
   const intervalRef = useRef(null);
 
@@ -69,7 +67,10 @@ export default function useBehaviourSignals(active = false) {
   const scrollsRef = useRef(0);
   const mouseDistRef = useRef(0);
   const lastMouseRef = useRef({ x: 0, y: 0, init: false });
-  const lastActivityTimeRef = useRef(Date.now());
+  // Initialised to 0; the active-effect below stamps the current time
+  // when the session starts. Calling ``Date.now()`` at ref creation
+  // would violate React's purity rule for render-phase code.
+  const lastActivityTimeRef = useRef(0);
 
   // Sliding-window buffers.
   const keysBuf = useRef(createRingBuffer(RING_SLOTS));
@@ -77,28 +78,25 @@ export default function useBehaviourSignals(active = false) {
   const scrollsBuf = useRef(createRingBuffer(RING_SLOTS));
   const mouseDistBuf = useRef(createRingBuffer(RING_SLOTS));
 
-  const resetIdleTimer = useCallback(() => {
-    setIsIdle(false);
+  const noteActivity = useCallback(() => {
     activityRef.current += 1;
     lastActivityTimeRef.current = Date.now();
-    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    idleTimerRef.current = setTimeout(() => setIsIdle(true), IDLE_TIMEOUT_MS);
   }, []);
 
   const handleKeydown = useCallback(() => {
     keysRef.current += 1;
-    resetIdleTimer();
-  }, [resetIdleTimer]);
+    noteActivity();
+  }, [noteActivity]);
 
   const handleClick = useCallback(() => {
     clicksRef.current += 1;
-    resetIdleTimer();
-  }, [resetIdleTimer]);
+    noteActivity();
+  }, [noteActivity]);
 
   const handleScroll = useCallback(() => {
     scrollsRef.current += 1;
-    resetIdleTimer();
-  }, [resetIdleTimer]);
+    noteActivity();
+  }, [noteActivity]);
 
   const handleMousemove = useCallback((e) => {
     const last = lastMouseRef.current;
@@ -108,12 +106,12 @@ export default function useBehaviourSignals(active = false) {
       mouseDistRef.current += Math.sqrt(dx * dx + dy * dy);
     }
     lastMouseRef.current = { x: e.clientX, y: e.clientY, init: true };
-    resetIdleTimer();
-  }, [resetIdleTimer]);
+    noteActivity();
+  }, [noteActivity]);
 
   const handleTouchstart = useCallback(() => {
-    resetIdleTimer();
-  }, [resetIdleTimer]);
+    noteActivity();
+  }, [noteActivity]);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -127,7 +125,6 @@ export default function useBehaviourSignals(active = false) {
     window.addEventListener('mousemove', handleMousemove, { passive: true });
     window.addEventListener('touchstart', handleTouchstart, { passive: true });
 
-    idleTimerRef.current = setTimeout(() => setIsIdle(true), IDLE_TIMEOUT_MS);
     lastActivityTimeRef.current = Date.now();
 
     intervalRef.current = setInterval(() => {
@@ -183,7 +180,6 @@ export default function useBehaviourSignals(active = false) {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('mousemove', handleMousemove);
       window.removeEventListener('touchstart', handleTouchstart);
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [
@@ -193,8 +189,7 @@ export default function useBehaviourSignals(active = false) {
     handleScroll,
     handleMousemove,
     handleTouchstart,
-    resetIdleTimer,
   ]);
 
-  return { isTabHidden, isIdle, activityCount, ...features };
+  return { isTabHidden, activityCount, ...features };
 }

@@ -117,16 +117,18 @@ export default function DashboardPage() {
   };
 
   // Distractions sorted
-  // Only webcam-observable distractions are surfaced here: tab-level
-  // idle and tab_hidden are unreliable indicators of actual focus
-  // because they fire whenever the user works in another tab or app
-  // (see ReportPage.jsx for the full rationale).
+  // Webcam-observable distractions + system-wide idle (applied only for
+  // input-required task types during sampling, zero for others). The
+  // older tab_hidden category is excluded because the Page Visibility
+  // API cannot distinguish productive multi-tab workflows from
+  // distraction (see ReportPage.jsx for the full rationale).
   const distractionsList = useMemo(() => {
     if (!data) return [];
     return [
       { label: 'Face missing', value: data.distractions.face_missing },
       { label: 'Looking away', value: data.distractions.looking_away },
       { label: 'Phone use', value: data.distractions.phone_use ?? 0 },
+      { label: 'Idle (no input)', value: data.distractions.idle ?? 0 },
     ].filter((d) => d.value > 0).sort((a, b) => b.value - a.value);
   }, [data]);
 

@@ -23,7 +23,6 @@ export const CAMERA_HEIGHT = 240;
 
 // ── Behavioural window (sliding 30s) ──
 export const BEHAVIOUR_WINDOW_SECONDS = 30;
-export const IDLE_TIMEOUT_MS = 15_000;
 
 // ── Contextual window (sliding 5min) ──
 export const CONTEXT_WINDOW_SECONDS = 5 * 60;
@@ -65,6 +64,14 @@ export const TASK_TYPES = [
   { value: 'study', label: 'Study', icon: '✏️' },
   { value: 'other', label: 'Other', icon: '🗂️' },
 ];
+
+// ── Task types that require continuous keyboard/mouse input to count
+//    as "working". For these, the Idle Detection API's system-wide
+//    idle signal is treated as a distraction (the user is definitely
+//    not typing if the OS reports no input anywhere). Reading, video,
+//    and study sessions are *not* in this set because they legitimately
+//    lack input activity (reading a book, watching a lecture, thinking).
+export const INPUT_REQUIRED_TASKS = new Set(['coding', 'writing']);
 
 // ── MediaPipe model CDN ──
 export const FACE_LANDMARKER_MODEL_URL =

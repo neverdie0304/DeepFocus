@@ -19,10 +19,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { createSession, updateSession, uploadEvents } from '../api/sessions';
-import { PERIODIC_UPLOAD_INTERVAL_MS, SAMPLE_INTERVAL_MS } from '../constants';
+import {
+  INPUT_REQUIRED_TASKS,
+  PERIODIC_UPLOAD_INTERVAL_MS,
+  SAMPLE_INTERVAL_MS,
+} from '../constants';
 import { assembleFeatureVector, computeFocusScore } from '../utils/scoring';
 import useBehaviourSignals from './useBehaviourSignals';
 import useContextSignals from './useContextSignals';
+import useIdleDetection from './useIdleDetection';
 import useTemporalFeatures from './useTemporalFeatures';
 import useTimer from './useTimer';
 
@@ -52,6 +57,7 @@ export default function useSession() {
   const signals = useBehaviourSignals(isRunning);
   const contextSignals = useContextSignals(isRunning, timer.elapsed);
   const temporal = useTemporalFeatures(currentScore, isRunning);
+  const idleDetection = useIdleDetection(isRunning);
 
   // Totals tracked via ref to avoid re-rendering on every sample.
   const totals = useRef({ ...INITIAL_TOTALS });
@@ -82,12 +88,16 @@ export default function useSession() {
   const contextSignalsRef = useRef(contextSignals);
   const temporalRef = useRef(temporal);
   const cameraEnabledRef = useRef(cameraEnabled);
+  const idleDetectionRef = useRef(idleDetection);
+  const taskTypeRef = useRef(taskType);
 
   useEffect(() => { faceFeaturesRef.current = faceFeatures; }, [faceFeatures]);
   useEffect(() => { signalsRef.current = signals; }, [signals]);
   useEffect(() => { contextSignalsRef.current = contextSignals; }, [contextSignals]);
   useEffect(() => { temporalRef.current = temporal; }, [temporal]);
   useEffect(() => { cameraEnabledRef.current = cameraEnabled; }, [cameraEnabled]);
+  useEffect(() => { idleDetectionRef.current = idleDetection; }, [idleDetection]);
+  useEffect(() => { taskTypeRef.current = taskType; }, [taskType]);
 
   // ── Main sampling loop (every 2 seconds while running). ──
   // Depends only on ``isRunning`` so the interval is set once per session
@@ -106,10 +116,18 @@ export default function useSession() {
       const tmp = temporalRef.current;
       const camOn = cameraEnabledRef.current;
 
-      const { isTabHidden, isIdle } = sig;
+      const { isTabHidden } = sig;
       const faceMissing = !ff.facePresent;
       const lookingAway = ff.lookingAway || false;
       const phonePresent = ff.phonePresent || false;
+
+      // System-wide idle matters only when the task requires continuous
+      // input (coding, writing). For reading / video / study / other,
+      // the user may legitimately be engaged without touching any input
+      // device — a book, a lecture, or a paper notebook — so the idle
+      // signal is suppressed for those task types.
+      const taskRequiresInput = INPUT_REQUIRED_TASKS.has(taskTypeRef.current);
+      const isIdle = taskRequiresInput && (idleDetectionRef.current.isIdle || false);
 
       const score = computeFocusScore({
         isIdle,
@@ -274,6 +292,7 @@ export default function useSession() {
     setFaceFeatures,
     // Backward-compatible derived booleans.
     cameraSignals: { isFaceMissing, isLookingAway },
+    idleDetection,
     events,
     ending,
     startSession,

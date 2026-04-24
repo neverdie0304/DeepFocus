@@ -17,26 +17,29 @@ import { formatDuration, formatTime } from '../utils/scoring';
 
 const SAMPLE_SECONDS = 2;
 
-// Distraction categories shown in the breakdown. Tab-hidden and tab-
-// level idle are intentionally excluded: the Page Visibility API and
-// window-scoped input listeners can only observe the DeepFocus tab, so
-// a user typing productively in another tab or native app looks
-// identical to a user who has walked away. Counting those states as
-// distractions would penalise normal workflows. The webcam-derived
-// signals, by contrast, keep working regardless of tab focus.
+// Distraction categories shown in the breakdown. Webcam-derived signals
+// always apply (they keep working regardless of tab focus). System-wide
+// idle — sourced from the W3C Idle Detection API — applies only for
+// task types that require continuous keyboard or mouse input; ``is_idle``
+// is always false in events recorded for reading / video / study /
+// other sessions, so this row auto-hides via the zero-time filter.
+// Tab switches are excluded entirely: the Page Visibility API cannot
+// distinguish productive multi-tab workflows from distraction.
 const DISTRACTION_META = [
   { key: 'phone_use',     label: 'Phone Use',       color: '#fb923c', emoji: '📱' },
   { key: 'face_missing',  label: 'Away from Desk',  color: '#f97316', emoji: '🚶' },
   { key: 'looking_away',  label: 'Looking Away',    color: '#a855f7', emoji: '👀' },
+  { key: 'idle',          label: 'Idle (no input)', color: '#eab308', emoji: '😴' },
 ];
 
 /**
  * Compute accurate "locked in" seconds from per-event flags.
  *
- * Only webcam-observable states count as not-locked-in: face missing,
- * looking away, or phone present. Tab-level idle and tab_hidden are
- * excluded — they trigger whenever the user works in any other tab or
- * application, not only when they are genuinely distracted.
+ * A sample counts as Locked In only when every distraction flag is
+ * false. ``is_idle`` here is the system-wide flag from Idle Detection,
+ * already gated by task type during sampling — it is only ever true
+ * for input-required tasks, so reading / video / study sessions still
+ * count as Locked In when the user is attentively idle-to-the-keyboard.
  *
  * Using ``duration - sum(time_*)`` would double-count samples where
  * multiple flags fire at once (e.g. phone + looking away when a user
@@ -49,6 +52,7 @@ function computeLockedInSeconds(events) {
     !e.is_face_missing
       && !e.is_looking_away
       && !e.is_phone_present
+      && !e.is_idle
   ));
   return clean.length * SAMPLE_SECONDS;
 }
@@ -148,6 +152,7 @@ export default function ReportPage() {
     face_missing: session.time_face_missing,
     looking_away: session.time_looking_away,
     phone_use: phoneUse,
+    idle: session.time_idle,
   };
 
   // Rank distractions by time (desc), drop zero-time ones — nothing to

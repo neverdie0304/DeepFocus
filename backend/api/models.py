@@ -94,6 +94,11 @@ class SessionEvent(models.Model):
     focus_score = models.FloatField()
 
     # ── Legacy boolean signals (kept for backward compatibility) ──
+    # ``is_idle`` is sourced from the W3C Idle Detection API (system-
+    # wide inactivity across *all* apps) and is gated by task type on
+    # the client: only coding and writing sessions populate it. For
+    # reading, video, study, and other sessions it is always false,
+    # because those workflows do not require continuous input.
     is_tab_hidden = models.BooleanField(default=False)
     is_idle = models.BooleanField(default=False)
     is_face_missing = models.BooleanField(default=False)
