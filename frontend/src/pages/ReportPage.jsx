@@ -13,7 +13,37 @@ import {
 } from 'chart.js';
 import { Line, Doughnut } from 'react-chartjs-2';
 import { getSession, updateSession, submitSelfReport, deleteSession } from '../api/sessions';
-import { formatTime } from '../utils/scoring';
+import { formatDuration, formatTime } from '../utils/scoring';
+
+const SAMPLE_SECONDS = 2;
+
+const DISTRACTION_META = [
+  { key: 'phone_use',     label: 'Phone Use',       color: '#fb923c', emoji: '📱' },
+  { key: 'face_missing',  label: 'Away from Desk',  color: '#f97316', emoji: '🚶' },
+  { key: 'looking_away',  label: 'Looking Away',    color: '#a855f7', emoji: '👀' },
+  { key: 'idle',          label: 'Idle',            color: '#eab308', emoji: '😴' },
+  { key: 'tab_hidden',    label: 'Tab Switched',    color: '#ef4444', emoji: '🗂️' },
+];
+
+/**
+ * Compute accurate "locked in" seconds from per-event flags.
+ *
+ * Using ``duration - sum(time_*)`` would double-count samples where
+ * multiple flags fire at once (e.g. phone + looking away when a user
+ * glances at a phone in their lap). Counting events with *no* flag set
+ * gives the true share of wholly-focused samples.
+ */
+function computeLockedInSeconds(events) {
+  if (!events || events.length === 0) return 0;
+  const clean = events.filter((e) => (
+    !e.is_idle
+      && !e.is_tab_hidden
+      && !e.is_face_missing
+      && !e.is_looking_away
+      && !e.is_phone_present
+  ));
+  return clean.length * SAMPLE_SECONDS;
+}
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler);
 
@@ -97,29 +127,36 @@ export default function ReportPage() {
     plugins: { legend: { display: false } },
   };
 
-  // Breakdown doughnut
+  // Per-category totals. Each is reported as cumulative seconds.
+  // Locked In is computed from events (accurate per-sample AND across
+  // overlapping categories), everything else comes from the session
+  // aggregates written at end-of-session.
   const phoneUse = session.time_phone_use ?? 0;
-  const focused = Math.max(
-    0,
-    session.duration
-      - session.time_idle
-      - session.time_tab_hidden
-      - session.time_face_missing
-      - session.time_looking_away
-      - phoneUse,
-  );
+  const lockedIn = computeLockedInSeconds(events);
+  const duration = session.duration || 1;  // avoid /0 on empty sessions
+  const lockedInPct = Math.min(100, Math.max(0, (lockedIn / duration) * 100));
+
+  const distractionTotals = {
+    idle: session.time_idle,
+    tab_hidden: session.time_tab_hidden,
+    face_missing: session.time_face_missing,
+    looking_away: session.time_looking_away,
+    phone_use: phoneUse,
+  };
+
+  // Rank distractions by time (desc), drop zero-time ones — nothing to
+  // say about categories that never fired.
+  const distractionList = DISTRACTION_META
+    .map((m) => ({ ...m, value: distractionTotals[m.key] || 0 }))
+    .filter((d) => d.value > 0.5)  // half a second noise floor
+    .sort((a, b) => b.value - a.value);
+
+  // Breakdown doughnut — kept as a visual overview alongside the list.
   const breakdownData = {
-    labels: ['Focused', 'Idle', 'Tab Hidden', 'Face Missing', 'Looking Away', 'Phone Use'],
+    labels: ['Locked In', ...distractionList.map((d) => d.label)],
     datasets: [{
-      data: [
-        focused,
-        session.time_idle,
-        session.time_tab_hidden,
-        session.time_face_missing,
-        session.time_looking_away,
-        phoneUse,
-      ],
-      backgroundColor: ['#22c55e', '#eab308', '#ef4444', '#f97316', '#a855f7', '#fb923c'],
+      data: [lockedIn, ...distractionList.map((d) => d.value)],
+      backgroundColor: ['#22c55e', ...distractionList.map((d) => d.color)],
       borderWidth: 0,
     }],
   };
@@ -130,16 +167,16 @@ export default function ReportPage() {
     },
   };
 
-  // Determine main distraction
-  const distractions = [
-    { name: 'idle time', value: session.time_idle },
-    { name: 'tab-hidden time', value: session.time_tab_hidden },
-    { name: 'face missing', value: session.time_face_missing },
-    { name: 'looking away', value: session.time_looking_away },
-    { name: 'phone use', value: phoneUse },
-  ].sort((a, b) => b.value - a.value);
+  const topDistraction = distractionList[0] || null;
 
-  const topDistraction = distractions[0];
+  // Headline copy — three tiers based on what share of the session
+  // was unambiguously focused. Thresholds chosen to feel rewarding
+  // without inflating grades (an 80%+ session is genuinely strong).
+  let lockedInVerdict;
+  if (lockedInPct >= 80) lockedInVerdict = 'Locked in the whole way.';
+  else if (lockedInPct >= 50) lockedInVerdict = 'Solid focus with some slips.';
+  else if (lockedInPct >= 25) lockedInVerdict = 'A working session, but fragmented.';
+  else lockedInVerdict = 'This one got away from you.';
 
   return (
     <div className="max-w-3xl mx-auto space-y-8 py-4">
@@ -155,16 +192,67 @@ export default function ReportPage() {
         <p className="text-gray-400 text-sm mb-2">Overall Focus Score</p>
         <p className={`text-6xl font-bold ${scoreColor}`}>{Math.round(score)}</p>
         <p className="text-gray-500 text-sm mt-2">
-          Duration: {formatTime(session.duration)} | Mode: {session.mode === 'camera_on' ? 'Camera On' : 'Camera Off'}
+          Duration: {formatDuration(session.duration)} · Mode: {session.mode === 'camera_on' ? 'Camera On' : 'Camera Off'}
         </p>
       </div>
 
-      {/* Score Explanation */}
-      {topDistraction && topDistraction.value > 0 && (
-        <div className="bg-gray-900 rounded-xl p-4 text-sm text-gray-400">
-          Score was mainly affected by <span className="text-white font-medium">{formatTime(Math.round(topDistraction.value))}</span> of {topDistraction.name}.
+      {/* Focus Breakdown — the honest answer to "how hard did I work". */}
+      <div className="bg-gray-900 rounded-xl p-6 space-y-6">
+        {/* Locked In hero */}
+        <div className="text-center">
+          <p className="text-gray-400 text-xs uppercase tracking-wider">Locked In</p>
+          <p className="text-5xl font-bold text-green-400 mt-2 font-mono">
+            {formatDuration(lockedIn)}
+          </p>
+          <p className="text-gray-500 text-sm mt-1">
+            {Math.round(lockedInPct)}% of {formatDuration(session.duration)} · {lockedInVerdict}
+          </p>
+          <div className="w-full bg-gray-800 rounded-full h-2 mt-4 overflow-hidden">
+            <div
+              className="bg-green-500 h-2 rounded-full transition-all"
+              style={{ width: `${lockedInPct}%` }}
+            />
+          </div>
         </div>
-      )}
+
+        {/* Per-category distraction list */}
+        {distractionList.length > 0 ? (
+          <div className="pt-4 border-t border-gray-800 space-y-2">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-3">
+              Time Spent Distracted
+            </p>
+            {distractionList.map((d) => {
+              const pct = (d.value / duration) * 100;
+              return (
+                <div key={d.key} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span aria-hidden="true" className="text-base">{d.emoji}</span>
+                    <span className="text-gray-300">{d.label}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-gray-400 font-mono tabular-nums">
+                      {formatDuration(d.value)}
+                    </span>
+                    <span className="text-gray-500 text-xs w-10 text-right tabular-nums">
+                      {pct < 1 ? '<1%' : `${Math.round(pct)}%`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            {topDistraction && topDistraction.value > 0 && (
+              <p className="text-xs text-gray-500 pt-3 border-t border-gray-800 mt-3">
+                Biggest drag: <span className="text-gray-300">{topDistraction.label.toLowerCase()}</span>
+                {' '}for <span className="text-gray-300">{formatDuration(topDistraction.value)}</span>.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="pt-4 border-t border-gray-800 text-center text-sm text-gray-500">
+            No distractions recorded — full focus from start to end.
+          </div>
+        )}
+      </div>
 
       {/* Timeline Chart */}
       {events.length > 0 && (
@@ -174,7 +262,7 @@ export default function ReportPage() {
         </div>
       )}
 
-      {/* Breakdown Chart */}
+      {/* Doughnut (visual overview to complement the list above) */}
       <div className="bg-gray-900 rounded-xl p-6">
         <h3 className="text-lg font-semibold mb-4">Time Breakdown</h3>
         <div className="max-w-xs mx-auto">

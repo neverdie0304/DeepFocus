@@ -189,3 +189,23 @@ export function formatTime(seconds) {
   }
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
+
+/**
+ * Human-friendly duration: "1h 23m", "5m 42s", "38s".
+ *
+ * Used in the session report where numbers read like English sentences
+ * rather than clocks — "Locked in for 42m 30s" is easier to parse than
+ * "42:30".
+ *
+ * @param {number} seconds
+ * @returns {string}
+ */
+export function formatDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) return r > 0 ? `${h}h ${m}m ${r}s` : `${h}h ${m}m`;
+  return r > 0 ? `${m}m ${r}s` : `${m}m`;
+}

@@ -6,7 +6,13 @@ vi.mock('../ml/FocusModel', () => ({
   loadModel: vi.fn(async () => false),
 }));
 
-import { computeFocusScore, assembleFeatureVector, computeFocusScoreML, formatTime } from './scoring';
+import {
+  assembleFeatureVector,
+  computeFocusScore,
+  computeFocusScoreML,
+  formatDuration,
+  formatTime,
+} from './scoring';
 import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
 
 describe('computeFocusScore (rule-based)', () => {
@@ -326,5 +332,39 @@ describe('formatTime', () => {
 
   it('pads single-digit minutes and seconds with zero', () => {
     expect(formatTime(3665)).toBe('1:01:05');
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats zero as 0s', () => {
+    expect(formatDuration(0)).toBe('0s');
+  });
+
+  it('formats seconds under a minute', () => {
+    expect(formatDuration(38)).toBe('38s');
+  });
+
+  it('drops seconds when they round to zero', () => {
+    expect(formatDuration(120)).toBe('2m');
+  });
+
+  it('formats minutes and seconds', () => {
+    expect(formatDuration(342)).toBe('5m 42s');
+  });
+
+  it('formats whole hours', () => {
+    expect(formatDuration(3600)).toBe('1h 0m');
+  });
+
+  it('formats hours with minutes and seconds', () => {
+    expect(formatDuration(4925)).toBe('1h 22m 5s');
+  });
+
+  it('rounds fractional seconds', () => {
+    expect(formatDuration(45.7)).toBe('46s');
+  });
+
+  it('clamps negative input to zero', () => {
+    expect(formatDuration(-5)).toBe('0s');
   });
 });
