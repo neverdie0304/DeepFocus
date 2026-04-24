@@ -39,13 +39,14 @@ export default function SessionPage() {
         faceConfidence: face.faceConfidence,
         phonePresent: face.phonePresent,
         phoneConfidence: face.phoneConfidence,
+        bodyPresent: face.bodyPresent,
       });
     }
   }, [
     face.facePresent, face.lookingAway, face.headYaw, face.headPitch,
     face.headRoll, face.earLeft, face.earRight, face.gazeX, face.gazeY,
     face.faceConfidence, face.phonePresent, face.phoneConfidence,
-    session.cameraEnabled,
+    face.bodyPresent, session.cameraEnabled,
   ]);
 
   const handleCameraToggle = (e) => {

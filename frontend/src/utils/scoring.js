@@ -184,17 +184,24 @@ export async function computeFocusScoreML(featureVector, scalerParams = null) {
  * Decide whether the current head pose counts as "looking away" for the
  * given task type.
  *
- * Yaw (left/right) is always checked symmetrically — turning the head
- * sideways is off-task for any task. Pitch (up/down) is split:
+ * Rules, in priority order:
  *
- *   - Looking up past ``PITCH_UP_THRESHOLD_DEG`` always counts as
- *     looking away. There is no task in which looking at the ceiling is
- *     on-task.
- *   - Looking down past the same threshold counts as looking away
- *     *only* when the task is not in ``DOWN_TOLERANT_TASKS`` —
- *     otherwise the user may be writing in a notebook, reading a book,
- *     or working a problem on paper, all of which are the point of the
- *     session.
+ *   1. Looking up (negative pitch past ``PITCH_UP_THRESHOLD_DEG``)
+ *      always counts as looking away. No task legitimately involves
+ *      staring at the ceiling.
+ *   2. Looking down past the threshold on a ``DOWN_TOLERANT_TASKS``
+ *      session is *always* accepted, including the diagonal cases
+ *      (down-left, down-right). A book or notebook off-centre on the
+ *      desk, or an off-centre webcam, routinely produces large yaw
+ *      values while the user is clearly engaged with paper. We accept
+ *      the trade-off that a user turning to chat to someone sitting
+ *      beside the desk while also tilting down would not be flagged;
+ *      in practice, the diagonals are dominated by legitimate paper
+ *      work.
+ *   3. Otherwise (no down-tolerance in effect), a yaw magnitude beyond
+ *      ``YAW_THRESHOLD_DEG`` counts as looking away — turning the head
+ *      sideways without looking down is off-task for any task.
+ *   4. Finally, looking down on a non-tolerant task counts.
  *
  * Sign convention — MediaPipe's facialTransformationMatrix yields
  * POSITIVE pitch when the user looks DOWN (chin toward chest) and
@@ -217,13 +224,20 @@ export function isLookingAwayForTask(yaw, pitch, taskType) {
   if (yaw === null || yaw === undefined || pitch === null || pitch === undefined) {
     return false;
   }
-  if (Math.abs(yaw) > YAW_THRESHOLD_DEG) return true;
-  // Looking up (negative pitch past threshold) is always off-task.
+  // Looking up — always off-task regardless of task type.
   if (pitch < -PITCH_UP_THRESHOLD_DEG) return true;
-  // Looking down (positive pitch past threshold) is off-task unless
-  // the session legitimately involves work below the screen.
-  if (DOWN_TOLERANT_TASKS.has(taskType)) return false;
-  return pitch > PITCH_UP_THRESHOLD_DEG;
+
+  // Looking down on a tolerant task — accept any yaw, because a user
+  // reading from an off-centre book or sitting at an off-axis webcam
+  // routinely produces large yaw values while genuinely on-task.
+  const lookingDown = pitch > PITCH_UP_THRESHOLD_DEG;
+  if (lookingDown && DOWN_TOLERANT_TASKS.has(taskType)) return false;
+
+  // Sideways turn without downward tilt — off-task for any task.
+  if (Math.abs(yaw) > YAW_THRESHOLD_DEG) return true;
+
+  // Looking down on a non-tolerant task.
+  return lookingDown;
 }
 
 /**

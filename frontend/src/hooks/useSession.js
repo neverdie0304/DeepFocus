@@ -79,7 +79,7 @@ export default function useSession() {
   // Kept consistent with the sampling-loop logic so the UI "Looking Away"
   // indicator doesn't flash during study/reading sessions when the user
   // merely tilts their head down to a book.
-  const isFaceMissing = !faceFeatures.facePresent;
+  const isFaceMissing = !faceFeatures.facePresent && !faceFeatures.bodyPresent;
   const isLookingAway = faceFeatures.facePresent && isLookingAwayForTask(
     faceFeatures.headYaw,
     faceFeatures.headPitch,
@@ -125,7 +125,11 @@ export default function useSession() {
       const camOn = cameraEnabledRef.current;
 
       const { isTabHidden } = sig;
-      const faceMissing = !ff.facePresent;
+      // "Away from desk" = neither face nor body visible. The body
+      // check prevents false positives when the user's face is
+      // occluded (a hand on chin while thinking, reading posture with
+      // hair forward) but they are plainly still at the desk.
+      const faceMissing = !ff.facePresent && !ff.bodyPresent;
       const phonePresent = ff.phonePresent || false;
 
       // Compute looking-away from raw head pose using task-conditional

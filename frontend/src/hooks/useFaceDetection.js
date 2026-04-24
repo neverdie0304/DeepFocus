@@ -21,6 +21,8 @@ import {
   FRAME_INTERVAL_MS,
   MEDIAPIPE_WASM_URL,
   OBJECT_DETECTOR_MODEL_URL,
+  PERSON_CLASS_NAME,
+  PERSON_SCORE_THRESHOLD,
   PHONE_CLASS_NAME,
   PHONE_SCORE_THRESHOLD,
   PITCH_THRESHOLD_DEG,
@@ -56,6 +58,8 @@ const DEFAULT_FEATURES = {
   // Object detection — phone usage
   phonePresent: false,
   phoneConfidence: 0,
+  // Object detection — body (torso/person) visible in frame
+  bodyPresent: false,
   // Blendshapes — engagement-relevant subset
   browDownLeft: 0,
   browDownRight: 0,
@@ -303,6 +307,19 @@ export default function useFaceDetection(enabled = false) {
       };
     }
 
+    /** Detect whether a person (torso/body) is present in the frame. */
+    function extractBody(objectResults) {
+      if (!objectResults || !objectResults.detections) return false;
+      for (const det of objectResults.detections) {
+        const cat = det.categories && det.categories[0];
+        if (cat && cat.categoryName === PERSON_CLASS_NAME
+            && cat.score >= PERSON_SCORE_THRESHOLD) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     /**
      * Update the rolling window of recent face-detection outcomes and
      * decide whether the smoothed state is "face present."
@@ -329,6 +346,7 @@ export default function useFaceDetection(enabled = false) {
         ? objectDetector.detectForVideo(video, ts)
         : null;
       const { phonePresent, phoneConfidence } = extractPhone(objectResults);
+      const bodyPresent = extractBody(objectResults);
 
       const rawHasFace = results.faceLandmarks && results.faceLandmarks.length > 0;
       const smoothedHasFace = updateFaceWindow(rawHasFace);
@@ -336,10 +354,13 @@ export default function useFaceDetection(enabled = false) {
       if (!smoothedHasFace) {
         // Keep phone detection even when the face is gone — the user may
         // be looking down at the phone just below the camera frame.
+        // bodyPresent is retained so the sampling loop can distinguish
+        // "user's face is occluded" from "user has left the desk".
         setFeatures({
           ...DEFAULT_FEATURES,
           phonePresent,
           phoneConfidence: roundTo(phoneConfidence, 3),
+          bodyPresent,
         });
         return;
       }
@@ -396,6 +417,7 @@ export default function useFaceDetection(enabled = false) {
         lookingAway,
         phonePresent,
         phoneConfidence: roundTo(phoneConfidence, 3),
+        bodyPresent,
         browDownLeft: blendshapes.browDownLeft ?? 0,
         browDownRight: blendshapes.browDownRight ?? 0,
         browInnerUp: blendshapes.browInnerUp ?? 0,

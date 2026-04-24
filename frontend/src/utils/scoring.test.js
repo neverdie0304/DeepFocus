@@ -582,13 +582,33 @@ describe('isLookingAwayForTask', () => {
       expect(isLookingAwayForTask(0, 80, 'study')).toBe(false);
     });
 
-    it('still flags sideways turn while looking down', () => {
-      // Yaw check fires before pitch-down suppression.
-      expect(isLookingAwayForTask(40, 35, 'study')).toBe(true);
+    it('accepts diagonal down-right for study (off-centre notebook)', () => {
+      // Looking down + sideways is a legitimate study posture when
+      // the notebook is off-centre or the webcam is off-axis.
+      expect(isLookingAwayForTask(40, 35, 'study')).toBe(false);
+    });
+
+    it('accepts diagonal down-left for writing (off-centre paper)', () => {
+      expect(isLookingAwayForTask(-40, 35, 'writing')).toBe(false);
+    });
+
+    it('accepts extreme yaw when combined with downward pitch for reading', () => {
+      expect(isLookingAwayForTask(60, 30, 'reading')).toBe(false);
+    });
+
+    it('still flags pure sideways turn (no downward pitch) even for study', () => {
+      // No downward tilt — user is genuinely turned sideways, not
+      // reading off-centre. This should still flag.
+      expect(isLookingAwayForTask(40, 5, 'study')).toBe(true);
     });
 
     it('still flags looking up (negative pitch) for tolerant tasks', () => {
       expect(isLookingAwayForTask(0, -35, 'study')).toBe(true);
+    });
+
+    it('flags up-and-sideways even on tolerant tasks', () => {
+      // Looking up always fires first, before any tolerance logic.
+      expect(isLookingAwayForTask(40, -30, 'study')).toBe(true);
     });
   });
 

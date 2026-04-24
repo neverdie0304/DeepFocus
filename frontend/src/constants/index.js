@@ -77,6 +77,18 @@ export const PENALTY_IDLE = 15;
 export const PHONE_SCORE_THRESHOLD = 0.4;
 export const PHONE_CLASS_NAME = 'cell phone';
 
+// COCO "person" class, used as a body-presence backstop for the
+// away-from-desk signal. The face detector alone produces false
+// positives for ``is_face_missing`` whenever the user's face is
+// occluded (hand on chin while thinking, hair in the way, stretching
+// backward briefly). When the object detector still sees the torso
+// in the frame, the user is clearly not away from the desk and
+// ``is_face_missing`` should not fire. Threshold kept higher than
+// the phone class because the "person" detector has more reliable
+// high-confidence hits than "cell phone."
+export const PERSON_SCORE_THRESHOLD = 0.5;
+export const PERSON_CLASS_NAME = 'person';
+
 // ── Rule-based scoring penalties (camera off) ──
 export const PENALTY_IDLE_CAMERA_OFF = 100;
 
