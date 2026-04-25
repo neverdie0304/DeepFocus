@@ -279,9 +279,14 @@ export default function useSession() {
     // surface the failure instead of silently dropping the user on the
     // report page for a session that was never saved.
     try {
+      // ``timer.elapsed`` is React state and may be stale by one
+      // throttled tick (especially after a long background-tab spell).
+      // ``timer.getElapsed()`` always returns the up-to-date wall-clock
+      // value at the moment of the call, which is the value we want
+      // persisted as the session duration.
       await updateSession(sessionId, {
         end_time: new Date().toISOString(),
-        duration: timer.elapsed,
+        duration: timer.getElapsed(),
         focus_score_final: Math.round(avgScore * 10) / 10,
         time_idle: totals.current.idle,
         time_tab_hidden: totals.current.tabHidden,
