@@ -13,18 +13,40 @@ import {
 } from 'chart.js';
 import { Line, Doughnut } from 'react-chartjs-2';
 import { getSession, updateSession, submitSelfReport, deleteSession } from '../api/sessions';
-import { computeLockedInSeconds, formatDuration, formatTime } from '../utils/scoring';
+import { TASK_TYPES } from '../constants';
+import {
+  computeDistractionBreakdown,
+  computeLockedInSeconds,
+  formatDuration,
+  formatTime,
+} from '../utils/scoring';
 
 // Distraction categories shown in the breakdown. See utils/scoring.js
-// (computeLockedInSeconds) for the full rationale on which signals
-// count (webcam + task-gated system-wide idle) and which do not
-// (tab-hidden, tab-level idle).
+// (computeLockedInSeconds, computeDistractionBreakdown) for the
+// rationale on which signals count and how overlapping per-event
+// flags are collapsed into a disjoint partition for the report view.
 const DISTRACTION_META = [
   { key: 'phone_use',     label: 'Phone Use',       color: '#fb923c', emoji: '📱' },
   { key: 'face_missing',  label: 'Away from Desk',  color: '#f97316', emoji: '🚶' },
   { key: 'looking_away',  label: 'Looking Away',    color: '#a855f7', emoji: '👀' },
   { key: 'idle',          label: 'Idle (no input)', color: '#eab308', emoji: '😴' },
 ];
+
+// Format an absolute datetime for the report header — e.g.
+// "Mon 14 Apr · 10:40". Locale set to en-GB for unambiguous DD-MMM
+// ordering; users are expected to recognise their own session times.
+function formatStartedAt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const date = d.toLocaleDateString('en-GB', {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+  const time = d.toLocaleTimeString('en-GB', {
+    hour: '2-digit', minute: '2-digit',
+  });
+  return `${date} · ${time}`;
+}
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler);
 
@@ -75,11 +97,24 @@ export default function ReportPage() {
   const score = session.focus_score_final ?? 0;
   const scoreColor = score >= 80 ? 'text-green-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
 
-  // Timeline chart data
+  // Timeline chart data. X-axis is the event timestamp relative to
+  // session start, *not* (event index × 2 s) — under background-tab
+  // throttling the sample frequency falls below 0.5 Hz, and an
+  // index-based axis would compress the entire long session into a
+  // short label range that contradicts the wall-clock duration shown
+  // above. Falls back to event-index seconds if either timestamp is
+  // missing (older events, mid-migration data).
   const events = session.events || [];
+  const startMs = session.start_time
+    ? new Date(session.start_time).getTime() : null;
   const timelineLabels = events.map((e, i) => {
-    const seconds = i * 2;
-    return formatTime(seconds);
+    if (startMs && e.timestamp) {
+      const elapsed = (new Date(e.timestamp).getTime() - startMs) / 1000;
+      if (Number.isFinite(elapsed)) {
+        return formatTime(Math.max(0, Math.round(elapsed)));
+      }
+    }
+    return formatTime(i * 2);
   });
   const timelineData = {
     labels: timelineLabels,
@@ -108,21 +143,18 @@ export default function ReportPage() {
     plugins: { legend: { display: false } },
   };
 
-  // Per-category totals. Each is reported as cumulative seconds.
-  // Locked In is computed from events (accurate per-sample AND across
-  // overlapping categories), everything else comes from the session
-  // aggregates written at end-of-session.
-  const phoneUse = session.time_phone_use ?? 0;
+  // Per-category totals are computed from the events array as a
+  // disjoint partition (see computeDistractionBreakdown): each event
+  // is assigned to exactly one bucket using a fixed priority order.
+  // This produces a breakdown that sums to ``locked_in + distractions
+  // ≈ session duration`` so the doughnut and the list are mutually
+  // consistent and the percentages are interpretable. The backend's
+  // overlapping totals (time_face_missing, etc.) remain available
+  // for weekly dashboard analytics, where overlap is the right metric.
   const lockedIn = computeLockedInSeconds(events);
+  const distractionTotals = computeDistractionBreakdown(events);
   const duration = session.duration || 1;  // avoid /0 on empty sessions
   const lockedInPct = Math.min(100, Math.max(0, (lockedIn / duration) * 100));
-
-  const distractionTotals = {
-    face_missing: session.time_face_missing,
-    looking_away: session.time_looking_away,
-    phone_use: phoneUse,
-    idle: session.time_idle,
-  };
 
   // Rank distractions by time (desc), drop zero-time ones — nothing to
   // say about categories that never fired.
@@ -183,6 +215,11 @@ export default function ReportPage() {
         <p className="text-gray-500 text-sm mt-2">
           Duration: {formatDuration(session.duration)} · Mode: {session.mode === 'camera_on' ? 'Camera On' : 'Camera Off'}
         </p>
+        {session.start_time && (
+          <p className="text-gray-600 text-xs mt-1">
+            Started {formatStartedAt(session.start_time)}
+          </p>
+        )}
       </div>
 
       {/* Focus Breakdown — the honest answer to "how hard did I work". */}
@@ -333,16 +370,16 @@ export default function ReportPage() {
       {/* Notes & Tag */}
       <div className="bg-gray-900 rounded-xl p-6 space-y-4">
         <h3 className="text-lg font-semibold">Session Notes</h3>
-        <div className="flex gap-2">
-          {['reading', 'coding', 'revision', 'writing', 'other'].map((t) => (
+        <div className="flex flex-wrap gap-2">
+          {TASK_TYPES.map((t) => (
             <button
-              key={t}
-              onClick={() => setTag(t)}
+              key={t.value}
+              onClick={() => setTag(t.value)}
               className={`px-3 py-1 rounded-full text-xs capitalize ${
-                tag === t ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                tag === t.value ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
               }`}
             >
-              {t}
+              {t.icon} {t.label}
             </button>
           ))}
         </div>

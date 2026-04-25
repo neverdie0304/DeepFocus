@@ -288,6 +288,39 @@ export function computeLockedInSeconds(events) {
 }
 
 /**
+ * Disjoint per-event distraction breakdown for the session report.
+ *
+ * The backend stores overlapping totals (``time_face_missing`` is the
+ * total time when face_missing was true, regardless of what other
+ * flags were also true at that moment), which is the right measure
+ * for the dashboard "this week you had X minutes of face_missing"
+ * view but is misleading on the per-session breakdown — a doughnut of
+ * overlapping totals visualises 60 s as 120 s when face_missing and
+ * idle fire together. This helper assigns each event to exactly one
+ * bucket using a fixed priority order and so produces a partition
+ * that sums to ``locked_in_seconds + sum(buckets) ≈ session
+ * duration`` (modulo throttled-tick gaps).
+ *
+ * Priority order is the order of the buckets returned: a sample where
+ * the user has left the desk (face_missing) is reported as
+ * face_missing even if a phone is also visible in frame.
+ *
+ * @param {Array} events
+ * @returns {{face_missing:number, phone_use:number, looking_away:number, idle:number}}
+ */
+export function computeDistractionBreakdown(events) {
+  const out = { face_missing: 0, phone_use: 0, looking_away: 0, idle: 0 };
+  if (!events || events.length === 0) return out;
+  for (const e of events) {
+    if (e.is_face_missing) out.face_missing += SAMPLE_SECONDS;
+    else if (e.is_phone_present) out.phone_use += SAMPLE_SECONDS;
+    else if (e.is_looking_away) out.looking_away += SAMPLE_SECONDS;
+    else if (e.is_idle) out.idle += SAMPLE_SECONDS;
+  }
+  return out;
+}
+
+/**
  * Format a duration in seconds as ``MM:SS`` or ``H:MM:SS``.
  *
  * @param {number} seconds

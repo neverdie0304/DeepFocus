@@ -8,6 +8,7 @@ vi.mock('../ml/FocusModel', () => ({
 
 import {
   assembleFeatureVector,
+  computeDistractionBreakdown,
   computeFocusScore,
   computeFocusScoreML,
   computeLockedInSeconds,
@@ -633,5 +634,98 @@ describe('isLookingAwayForTask', () => {
       // of flagging extreme pitches.
       expect(isLookingAwayForTask(0, 35, 'unknown-task')).toBe(true);
     });
+  });
+});
+
+describe('computeDistractionBreakdown', () => {
+  const makeEvent = (flags = {}) => ({
+    is_face_missing: false,
+    is_looking_away: false,
+    is_phone_present: false,
+    is_idle: false,
+    ...flags,
+  });
+
+  it('returns all zeros for empty input', () => {
+    expect(computeDistractionBreakdown([])).toEqual({
+      face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
+    });
+    expect(computeDistractionBreakdown(null)).toEqual({
+      face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
+    });
+    expect(computeDistractionBreakdown(undefined)).toEqual({
+      face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
+    });
+  });
+
+  it('counts a single category in isolation', () => {
+    const events = [
+      makeEvent({ is_face_missing: true }),
+      makeEvent({ is_face_missing: true }),
+      makeEvent({ is_face_missing: true }),
+    ];
+    expect(computeDistractionBreakdown(events)).toEqual({
+      face_missing: 6, phone_use: 0, looking_away: 0, idle: 0,
+    });
+  });
+
+  it('does not count locked-in events in any bucket', () => {
+    const events = [makeEvent(), makeEvent(), makeEvent()];
+    expect(computeDistractionBreakdown(events)).toEqual({
+      face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
+    });
+  });
+
+  it('assigns each event to exactly one bucket (no double counting)', () => {
+    // An event with phone + looking_away simultaneously should count
+    // once as phone_use (higher priority), not twice.
+    const events = [
+      makeEvent({ is_phone_present: true, is_looking_away: true }),
+    ];
+    const out = computeDistractionBreakdown(events);
+    expect(out.phone_use).toBe(2);
+    expect(out.looking_away).toBe(0);
+  });
+
+  it('respects priority order: face_missing > phone_use > looking_away > idle', () => {
+    // All four flags on a single event → counted as face_missing only.
+    const events = [makeEvent({
+      is_face_missing: true,
+      is_phone_present: true,
+      is_looking_away: true,
+      is_idle: true,
+    })];
+    expect(computeDistractionBreakdown(events)).toEqual({
+      face_missing: 2, phone_use: 0, looking_away: 0, idle: 0,
+    });
+  });
+
+  it('phone beats looking_away when face is present', () => {
+    const events = [makeEvent({
+      is_phone_present: true,
+      is_looking_away: true,
+      is_idle: true,
+    })];
+    expect(computeDistractionBreakdown(events).phone_use).toBe(2);
+  });
+
+  it('looking_away beats idle', () => {
+    const events = [makeEvent({ is_looking_away: true, is_idle: true })];
+    expect(computeDistractionBreakdown(events).looking_away).toBe(2);
+  });
+
+  it('produces a partition: lockedIn + sum(buckets) = total event time', () => {
+    // 5 events, 2 face_missing, 1 phone, 1 looking_away (alone), 1 clean.
+    const events = [
+      makeEvent({ is_face_missing: true }),
+      makeEvent({ is_face_missing: true }),
+      makeEvent({ is_phone_present: true }),
+      makeEvent({ is_looking_away: true }),
+      makeEvent(),
+    ];
+    const out = computeDistractionBreakdown(events);
+    const lockedIn = computeLockedInSeconds(events);
+    const sum = out.face_missing + out.phone_use + out.looking_away + out.idle + lockedIn;
+    expect(sum).toBe(events.length * 2);
   });
 });
