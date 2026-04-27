@@ -146,14 +146,18 @@ export default function ReportPage() {
   // Per-category totals are computed from the events array as a
   // disjoint partition (see computeDistractionBreakdown): each event
   // is assigned to exactly one bucket using a fixed priority order.
-  // This produces a breakdown that sums to ``locked_in + distractions
-  // ≈ session duration`` so the doughnut and the list are mutually
-  // consistent and the percentages are interpretable. The backend's
-  // overlapping totals (time_face_missing, etc.) remain available
-  // for weekly dashboard analytics, where overlap is the right metric.
-  const lockedIn = computeLockedInSeconds(events);
-  const distractionTotals = computeDistractionBreakdown(events);
+  // Both helpers extrapolate the observed clean / per-bucket ratios
+  // onto the wall-clock duration, which corrects the under-counting
+  // that ``setInterval`` throttling on background tabs and macOS
+  // display sleep would otherwise produce. The breakdown sums to
+  // roughly the session duration so the doughnut and the list are
+  // mutually consistent and the percentages are interpretable. The
+  // backend's overlapping totals (time_face_missing, etc.) remain
+  // available for weekly dashboard analytics, where overlap is the
+  // right metric.
   const duration = session.duration || 1;  // avoid /0 on empty sessions
+  const lockedIn = computeLockedInSeconds(events, duration);
+  const distractionTotals = computeDistractionBreakdown(events, duration);
   const lockedInPct = Math.min(100, Math.max(0, (lockedIn / duration) * 100));
 
   // Rank distractions by time (desc), drop zero-time ones — nothing to

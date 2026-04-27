@@ -24,12 +24,9 @@ import {
   PENALTY_PHONE_USE,
   PITCH_THRESHOLD_DEG,
   PITCH_UP_THRESHOLD_DEG,
-  SAMPLE_INTERVAL_MS,
   YAW_THRESHOLD_DEG,
 } from '../constants';
 import { isModelLoaded, predictFocusScore } from '../ml/FocusModel';
-
-const SAMPLE_SECONDS = SAMPLE_INTERVAL_MS / 1000;
 
 /**
  * @typedef {Object} RuleBasedInput
@@ -260,62 +257,88 @@ export function isIdleForTask(taskType, systemIdle) {
 }
 
 /**
+ * Classify a single event by its primary distraction signal.
+ *
+ * Returns one of ``face_missing``, ``phone_use``, ``looking_away``,
+ * ``idle``, or ``null`` (for a clean / locked-in event). The priority
+ * order is fixed: a sample where the user has left the desk is
+ * reported as face_missing even if a phone is also visible in frame.
+ */
+function classifyEvent(e) {
+  if (e.is_face_missing) return 'face_missing';
+  if (e.is_phone_present) return 'phone_use';
+  if (e.is_looking_away) return 'looking_away';
+  if (e.is_idle) return 'idle';
+  return null;
+}
+
+/**
  * Seconds within a session where every distraction flag is false.
  *
- * Counting events (rather than ``duration - sum(time_*)``) avoids
- * double-counting samples where multiple flags fire simultaneously —
- * looking at a phone below the camera typically triggers both
- * ``is_phone_present`` and ``is_looking_away`` in the same event.
+ * Computed by extrapolating the *observed* clean-sample ratio onto
+ * the wall-clock session duration. The naive ``clean.length × 2 s``
+ * formulation undercounts whenever ``setInterval`` is throttled —
+ * Chrome reduces background-tab interval frequency to roughly 1/min
+ * and macOS display-sleep pauses JavaScript entirely, leaving
+ * stretches of the session unsampled even though the wall-clock
+ * timer (``timer.getElapsed``) keeps running. A user whose two-hour
+ * session was almost entirely on another tab would observe Locked In
+ * of about half their session despite a constant focus score of 100.
  *
- * ``is_idle`` is included because it is already task-type-gated at
- * the sampling layer (see ``isIdleForTask``): for reading / video /
- * study / other sessions it is always false, so the filter has no
- * effect; for coding / writing sessions it correctly excludes
- * zero-input samples.
+ * The fix: assume the sampled subset is representative of the
+ * unsampled subset, and report Locked In as ``(clean / total) ×
+ * duration``. The assumption is loose — a user gaming themselves
+ * could put the laptop to sleep mid-distraction and the ratio would
+ * over-credit them — but it is the best honest estimate when the
+ * platform refuses to fire enough samples to measure directly. See
+ * thesis §3.5.2 for the design rationale.
+ *
+ * Priority gating with face_missing happens via classifyEvent.
  *
  * @param {Array} events - SessionEvents from the detail endpoint.
+ * @param {number} duration - session.duration in seconds (wall clock).
  * @returns {number}
  */
-export function computeLockedInSeconds(events) {
+export function computeLockedInSeconds(events, duration) {
   if (!events || events.length === 0) return 0;
-  const clean = events.filter((e) => (
-    !e.is_face_missing
-      && !e.is_looking_away
-      && !e.is_phone_present
-      && !e.is_idle
-  ));
-  return clean.length * SAMPLE_SECONDS;
+  if (!duration || duration <= 0) return 0;
+  const clean = events.filter((e) => classifyEvent(e) === null).length;
+  return Math.round((clean / events.length) * duration);
 }
 
 /**
  * Disjoint per-event distraction breakdown for the session report.
  *
- * The backend stores overlapping totals (``time_face_missing`` is the
- * total time when face_missing was true, regardless of what other
- * flags were also true at that moment), which is the right measure
- * for the dashboard "this week you had X minutes of face_missing"
- * view but is misleading on the per-session breakdown — a doughnut of
- * overlapping totals visualises 60 s as 120 s when face_missing and
- * idle fire together. This helper assigns each event to exactly one
- * bucket using a fixed priority order and so produces a partition
- * that sums to ``locked_in_seconds + sum(buckets) ≈ session
- * duration`` (modulo throttled-tick gaps).
+ * Uses the same ratio-extrapolation approach as
+ * ``computeLockedInSeconds`` so the two helpers produce a partition
+ * that sums to roughly the session duration regardless of how many
+ * samples the throttling browser actually fired. The backend's
+ * overlapping totals (``time_face_missing`` = total time when
+ * face_missing was true regardless of other simultaneous flags) are
+ * retained on the session row for the dashboard, where overlap is
+ * the right measure ("how many minutes of phone use this week");
+ * the per-session report uses this disjoint, extrapolated view
+ * because it is what the user reads as a coherent breakdown.
  *
- * Priority order is the order of the buckets returned: a sample where
- * the user has left the desk (face_missing) is reported as
- * face_missing even if a phone is also visible in frame.
+ * Each event contributes to exactly one bucket via classifyEvent:
+ * priority is face_missing > phone_use > looking_away > idle.
  *
  * @param {Array} events
+ * @param {number} duration - session.duration in seconds.
  * @returns {{face_missing:number, phone_use:number, looking_away:number, idle:number}}
  */
-export function computeDistractionBreakdown(events) {
+export function computeDistractionBreakdown(events, duration) {
   const out = { face_missing: 0, phone_use: 0, looking_away: 0, idle: 0 };
   if (!events || events.length === 0) return out;
+  if (!duration || duration <= 0) return out;
+  const counts = { face_missing: 0, phone_use: 0, looking_away: 0, idle: 0 };
   for (const e of events) {
-    if (e.is_face_missing) out.face_missing += SAMPLE_SECONDS;
-    else if (e.is_phone_present) out.phone_use += SAMPLE_SECONDS;
-    else if (e.is_looking_away) out.looking_away += SAMPLE_SECONDS;
-    else if (e.is_idle) out.idle += SAMPLE_SECONDS;
+    const cls = classifyEvent(e);
+    if (cls !== null) counts[cls] += 1;
+  }
+  const total = events.length;
+  for (const k of Object.keys(out)) {
+    out[k] = Math.round((counts[k] / total) * duration);
   }
   return out;
 }

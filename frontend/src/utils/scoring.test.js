@@ -430,18 +430,29 @@ describe('computeLockedInSeconds', () => {
     ...flags,
   });
 
+  // For most cases below the duration is set to ``events.length * 2``
+  // so the extrapolation reduces to the historical "samples × 2 s"
+  // behaviour. The throttled-sampling cases at the bottom set a much
+  // larger duration to exercise the ratio extrapolation explicitly.
+
   it('returns 0 for an empty event list', () => {
-    expect(computeLockedInSeconds([])).toBe(0);
+    expect(computeLockedInSeconds([], 100)).toBe(0);
   });
 
   it('returns 0 for null or undefined events', () => {
-    expect(computeLockedInSeconds(null)).toBe(0);
-    expect(computeLockedInSeconds(undefined)).toBe(0);
+    expect(computeLockedInSeconds(null, 100)).toBe(0);
+    expect(computeLockedInSeconds(undefined, 100)).toBe(0);
   });
 
-  it('counts every event as 2 seconds when no flags are set', () => {
+  it('returns 0 when duration is missing or non-positive', () => {
+    expect(computeLockedInSeconds([makeEvent()], 0)).toBe(0);
+    expect(computeLockedInSeconds([makeEvent()], -1)).toBe(0);
+    expect(computeLockedInSeconds([makeEvent()])).toBe(0);
+  });
+
+  it('reports the full duration when every event is clean', () => {
     const events = [makeEvent(), makeEvent(), makeEvent()];
-    expect(computeLockedInSeconds(events)).toBe(6);
+    expect(computeLockedInSeconds(events, 6)).toBe(6);
   });
 
   it('excludes samples where face is missing', () => {
@@ -450,7 +461,8 @@ describe('computeLockedInSeconds', () => {
       makeEvent({ is_face_missing: true }),
       makeEvent(),
     ];
-    expect(computeLockedInSeconds(events)).toBe(4);
+    // 2 of 3 events clean → (2/3) * 6 = 4
+    expect(computeLockedInSeconds(events, 6)).toBe(4);
   });
 
   it('excludes samples where user is looking away', () => {
@@ -458,7 +470,7 @@ describe('computeLockedInSeconds', () => {
       makeEvent({ is_looking_away: true }),
       makeEvent(),
     ];
-    expect(computeLockedInSeconds(events)).toBe(2);
+    expect(computeLockedInSeconds(events, 4)).toBe(2);
   });
 
   it('excludes samples where phone is present', () => {
@@ -466,7 +478,7 @@ describe('computeLockedInSeconds', () => {
       makeEvent(),
       makeEvent({ is_phone_present: true }),
     ];
-    expect(computeLockedInSeconds(events)).toBe(2);
+    expect(computeLockedInSeconds(events, 4)).toBe(2);
   });
 
   it('excludes samples where system is idle (already task-gated upstream)', () => {
@@ -475,7 +487,8 @@ describe('computeLockedInSeconds', () => {
       makeEvent(),
       makeEvent({ is_idle: true }),
     ];
-    expect(computeLockedInSeconds(events)).toBe(2);
+    // 1 of 3 clean → (1/3) * 6 = 2
+    expect(computeLockedInSeconds(events, 6)).toBe(2);
   });
 
   it('does not double-count events with multiple distraction flags', () => {
@@ -485,7 +498,7 @@ describe('computeLockedInSeconds', () => {
       makeEvent({ is_phone_present: true, is_looking_away: true }),
       makeEvent(),
     ];
-    expect(computeLockedInSeconds(events)).toBe(2);
+    expect(computeLockedInSeconds(events, 4)).toBe(2);
   });
 
   it('ignores flags absent from the event object (treated as false)', () => {
@@ -495,7 +508,42 @@ describe('computeLockedInSeconds', () => {
       { is_face_missing: false, is_looking_away: false },
       { is_face_missing: false, is_looking_away: false },
     ];
-    expect(computeLockedInSeconds(events)).toBe(4);
+    expect(computeLockedInSeconds(events, 4)).toBe(4);
+  });
+
+  describe('ratio extrapolation across throttled-sample sessions', () => {
+    it('extrapolates a clean ratio onto a longer wall-clock duration', () => {
+      // 100 samples, all clean, but session was 1 hour: report ~1 h.
+      // setInterval was throttled (e.g. background tab) so we have
+      // far fewer samples than 1800 (= 3600 / 2). The honest estimate
+      // is that the entire hour was Locked In.
+      const events = Array.from({ length: 100 }, () => makeEvent());
+      expect(computeLockedInSeconds(events, 3600)).toBe(3600);
+    });
+
+    it('reproduces the user-reported scenario: 99.9% clean over 2 h 15 m', () => {
+      // 2707 clean + 2 face_missing = 2709 events, duration 8116 s.
+      // (2707 / 2709) * 8116 ≈ 8110 s, not the under-counted 5414 s
+      // that ``events × 2 s`` would produce.
+      const events = [
+        ...Array.from({ length: 2707 }, () => makeEvent()),
+        ...Array.from({ length: 2 }, () => makeEvent({ is_face_missing: true })),
+      ];
+      expect(computeLockedInSeconds(events, 8116)).toBe(8110);
+    });
+
+    it('half clean / half distracted gives half the duration', () => {
+      const events = [
+        ...Array.from({ length: 50 }, () => makeEvent()),
+        ...Array.from({ length: 50 }, () => makeEvent({ is_face_missing: true })),
+      ];
+      expect(computeLockedInSeconds(events, 600)).toBe(300);
+    });
+
+    it('all distracted samples → 0 Locked In regardless of duration', () => {
+      const events = Array.from({ length: 10 }, () => makeEvent({ is_face_missing: true }));
+      expect(computeLockedInSeconds(events, 1000)).toBe(0);
+    });
   });
 });
 
@@ -646,14 +694,28 @@ describe('computeDistractionBreakdown', () => {
     ...flags,
   });
 
+  // Tests below pass duration = events.length * 2 to keep the
+  // expected values aligned with the historical "samples × 2 s"
+  // semantics; the throttled-sampling section at the end exercises
+  // the ratio extrapolation explicitly.
+
   it('returns all zeros for empty input', () => {
-    expect(computeDistractionBreakdown([])).toEqual({
+    expect(computeDistractionBreakdown([], 100)).toEqual({
       face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
     });
-    expect(computeDistractionBreakdown(null)).toEqual({
+    expect(computeDistractionBreakdown(null, 100)).toEqual({
       face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
     });
-    expect(computeDistractionBreakdown(undefined)).toEqual({
+    expect(computeDistractionBreakdown(undefined, 100)).toEqual({
+      face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
+    });
+  });
+
+  it('returns all zeros when duration is missing or non-positive', () => {
+    expect(computeDistractionBreakdown([makeEvent()], 0)).toEqual({
+      face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
+    });
+    expect(computeDistractionBreakdown([makeEvent()], -1)).toEqual({
       face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
     });
   });
@@ -664,14 +726,14 @@ describe('computeDistractionBreakdown', () => {
       makeEvent({ is_face_missing: true }),
       makeEvent({ is_face_missing: true }),
     ];
-    expect(computeDistractionBreakdown(events)).toEqual({
+    expect(computeDistractionBreakdown(events, 6)).toEqual({
       face_missing: 6, phone_use: 0, looking_away: 0, idle: 0,
     });
   });
 
   it('does not count locked-in events in any bucket', () => {
     const events = [makeEvent(), makeEvent(), makeEvent()];
-    expect(computeDistractionBreakdown(events)).toEqual({
+    expect(computeDistractionBreakdown(events, 6)).toEqual({
       face_missing: 0, phone_use: 0, looking_away: 0, idle: 0,
     });
   });
@@ -682,7 +744,7 @@ describe('computeDistractionBreakdown', () => {
     const events = [
       makeEvent({ is_phone_present: true, is_looking_away: true }),
     ];
-    const out = computeDistractionBreakdown(events);
+    const out = computeDistractionBreakdown(events, 2);
     expect(out.phone_use).toBe(2);
     expect(out.looking_away).toBe(0);
   });
@@ -695,7 +757,7 @@ describe('computeDistractionBreakdown', () => {
       is_looking_away: true,
       is_idle: true,
     })];
-    expect(computeDistractionBreakdown(events)).toEqual({
+    expect(computeDistractionBreakdown(events, 2)).toEqual({
       face_missing: 2, phone_use: 0, looking_away: 0, idle: 0,
     });
   });
@@ -706,15 +768,15 @@ describe('computeDistractionBreakdown', () => {
       is_looking_away: true,
       is_idle: true,
     })];
-    expect(computeDistractionBreakdown(events).phone_use).toBe(2);
+    expect(computeDistractionBreakdown(events, 2).phone_use).toBe(2);
   });
 
   it('looking_away beats idle', () => {
     const events = [makeEvent({ is_looking_away: true, is_idle: true })];
-    expect(computeDistractionBreakdown(events).looking_away).toBe(2);
+    expect(computeDistractionBreakdown(events, 2).looking_away).toBe(2);
   });
 
-  it('produces a partition: lockedIn + sum(buckets) = total event time', () => {
+  it('produces a partition: lockedIn + sum(buckets) = duration (modulo rounding)', () => {
     // 5 events, 2 face_missing, 1 phone, 1 looking_away (alone), 1 clean.
     const events = [
       makeEvent({ is_face_missing: true }),
@@ -723,9 +785,50 @@ describe('computeDistractionBreakdown', () => {
       makeEvent({ is_looking_away: true }),
       makeEvent(),
     ];
-    const out = computeDistractionBreakdown(events);
-    const lockedIn = computeLockedInSeconds(events);
+    const duration = events.length * 2;
+    const out = computeDistractionBreakdown(events, duration);
+    const lockedIn = computeLockedInSeconds(events, duration);
     const sum = out.face_missing + out.phone_use + out.looking_away + out.idle + lockedIn;
-    expect(sum).toBe(events.length * 2);
+    expect(sum).toBe(duration);
+  });
+
+  describe('ratio extrapolation across throttled-sample sessions', () => {
+    it('extrapolates a single category onto a longer wall-clock duration', () => {
+      // 100 face_missing samples in a 1-hour session: every sample
+      // we got was face_missing, so the honest estimate is that the
+      // entire hour was face_missing.
+      const events = Array.from({ length: 100 }, () => makeEvent({ is_face_missing: true }));
+      const out = computeDistractionBreakdown(events, 3600);
+      expect(out.face_missing).toBe(3600);
+      expect(out.phone_use).toBe(0);
+      expect(out.looking_away).toBe(0);
+      expect(out.idle).toBe(0);
+    });
+
+    it('preserves bucket proportions when extrapolated', () => {
+      // 50/50 face_missing vs phone_use over 100 samples in a 600-s
+      // session → 300 s each.
+      const events = [
+        ...Array.from({ length: 50 }, () => makeEvent({ is_face_missing: true })),
+        ...Array.from({ length: 50 }, () => makeEvent({ is_phone_present: true })),
+      ];
+      const out = computeDistractionBreakdown(events, 600);
+      expect(out.face_missing).toBe(300);
+      expect(out.phone_use).toBe(300);
+    });
+
+    it('clean + phone partition extrapolated to the full duration', () => {
+      // 8 clean + 2 phone samples in a 600 s session.
+      // clean ratio 80%, phone ratio 20%.
+      const events = [
+        ...Array.from({ length: 8 }, () => makeEvent()),
+        ...Array.from({ length: 2 }, () => makeEvent({ is_phone_present: true })),
+      ];
+      const lockedIn = computeLockedInSeconds(events, 600);
+      const out = computeDistractionBreakdown(events, 600);
+      expect(lockedIn).toBe(480);
+      expect(out.phone_use).toBe(120);
+      expect(lockedIn + out.phone_use).toBe(600);
+    });
   });
 });
