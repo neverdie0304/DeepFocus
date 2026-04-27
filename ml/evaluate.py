@@ -2,11 +2,15 @@
 evaluate.py — Generate evaluation plots and comparison tables for the thesis.
 
 Produces:
-  - Feature importance bar chart (SHAP or XGBoost built-in)
-  - Ablation study comparison chart
-  - Rule-based vs ML scatter plot
-  - Confusion matrix for 3-class
-  - Focus score timeline overlay (rule-based vs ML)
+  - Feature importance bar chart (XGBoost built-in)
+  - Ablation study comparison chart (RQ3)
+  - 3-class confusion matrix heatmap (RQ1 — classification metrics)
+  - Rule-based vs ML scatter plot (sanity check, not a main result —
+    rule-based is retained as a graceful-degradation fallback only,
+    see thesis Chapter 3.4.3)
+  - Markdown comparison table covering MAE, RMSE, accuracy, macro
+    precision, macro recall, and macro F1 — the metric set called for
+    in supervisor feedback on the evaluation chapter.
 
 Usage:
     python evaluate.py
@@ -168,10 +172,71 @@ def plot_rule_vs_ml(output_path):
     plt.close()
 
 
+def plot_confusion_matrix(results_path, output_path):
+    """Render the aggregated 3-class confusion matrix as a heatmap.
+
+    Reads the ``classification.confusion_matrix`` block written by
+    ``train_xgboost.py``, where the matrix is summed across all folds
+    of the cross-validation.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("pip install matplotlib")
+        return
+
+    with open(results_path) as f:
+        results = json.load(f)
+
+    cls = results.get("classification", {})
+    cm = cls.get("confusion_matrix")
+    labels = cls.get("confusion_matrix_labels", ["low", "medium", "high"])
+    if not cm:
+        print("No confusion matrix in results")
+        return
+
+    import numpy as np
+    cm_arr = np.array(cm)
+    # Row-normalised (recall-style): each row sums to 1.
+    cm_norm = cm_arr / cm_arr.sum(axis=1, keepdims=True).clip(min=1)
+
+    fig, ax = plt.subplots(figsize=(5.5, 5))
+    im = ax.imshow(cm_norm, cmap="Blues", vmin=0, vmax=1)
+    ax.set_xticks(range(len(labels)))
+    ax.set_yticks(range(len(labels)))
+    ax.set_xticklabels(labels)
+    ax.set_yticklabels(labels)
+    ax.set_xlabel("Predicted class")
+    ax.set_ylabel("True class")
+    ax.set_title("3-class concentration: confusion matrix\n(row-normalised, summed across folds)")
+
+    # Annotate each cell with both raw count and normalised proportion.
+    for i in range(len(labels)):
+        for j in range(len(labels)):
+            colour = "white" if cm_norm[i, j] > 0.5 else "black"
+            ax.text(j, i, f"{cm_arr[i, j]}\n({cm_norm[i, j]:.2f})",
+                    ha="center", va="center", color=colour, fontsize=10)
+
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    print(f"  Saved → {output_path}")
+    plt.close()
+
+
 def generate_comparison_table(output_path):
-    """Create a markdown comparison table of all models."""
-    rows = ["| Model | MAE | RMSE | 3-Class Acc | F1 Macro |",
-            "|-------|-----|------|-------------|----------|"]
+    """Create a markdown comparison table of all models.
+
+    The XGBoost row carries the full RQ1 metric set: regression
+    (MAE, RMSE) and classification (accuracy, macro precision, macro
+    recall, macro F1) — the four classification metrics requested by
+    the supervisor's evaluation guidance.
+    """
+    header = (
+        "| Model | MAE | RMSE | Accuracy | Precision | Recall | F1 Macro |"
+    )
+    sep = "|-------|-----|------|----------|-----------|--------|----------|"
+    rows = [header, sep]
 
     # XGBoost
     if XGBOOST_RESULTS_JSON.exists():
@@ -179,10 +244,21 @@ def generate_comparison_table(output_path):
             xgb = json.load(f)
         reg = xgb.get("regression", {})
         cls = xgb.get("classification", {})
+
+        def _fmt(d, mean_key, std_key, dp=3):
+            mean = d.get(mean_key)
+            std = d.get(std_key)
+            if mean is None:
+                return "—"
+            return f"{mean:.{dp}f}±{std:.{dp}f}" if std is not None else f"{mean:.{dp}f}"
+
         rows.append(
-            f"| XGBoost | {reg.get('mae_mean', '-'):.2f}±{reg.get('mae_std', 0):.2f} | "
-            f"{reg.get('rmse_mean', '-'):.2f}±{reg.get('rmse_std', 0):.2f} | "
-            f"{cls.get('accuracy_mean', '-'):.3f} | {cls.get('f1_macro_mean', '-'):.3f} |"
+            f"| XGBoost | {_fmt(reg, 'mae_mean', 'mae_std', 2)} | "
+            f"{_fmt(reg, 'rmse_mean', 'rmse_std', 2)} | "
+            f"{_fmt(cls, 'accuracy_mean', 'accuracy_std')} | "
+            f"{_fmt(cls, 'precision_macro_mean', 'precision_macro_std')} | "
+            f"{_fmt(cls, 'recall_macro_mean', 'recall_macro_std')} | "
+            f"{_fmt(cls, 'f1_macro_mean', 'f1_macro_std')} |"
         )
 
     # LSTM
@@ -191,11 +267,8 @@ def generate_comparison_table(output_path):
             lstm = json.load(f)
         rows.append(
             f"| LSTM | {lstm.get('val_mae', '-'):.2f} | "
-            f"{lstm.get('val_rmse', '-'):.2f} | - | - |"
+            f"{lstm.get('val_rmse', '-'):.2f} | — | — | — | — |"
         )
-
-    # Rule-based baseline (MAE = 0 against itself, but vs ESM it would differ)
-    rows.append("| Rule-Based | baseline | baseline | baseline | baseline |")
 
     table = "\n".join(rows)
     with open(output_path, "w") as f:
@@ -217,6 +290,11 @@ def main():
 
         print("\n═══ Generating Ablation Chart ═══")
         plot_ablation(XGBOOST_RESULTS_JSON, RESULTS_DIR / "ablation_study.png")
+
+        print("\n═══ Generating Confusion Matrix ═══")
+        plot_confusion_matrix(
+            XGBOOST_RESULTS_JSON, RESULTS_DIR / "confusion_matrix.png",
+        )
 
     if DATASET_CSV.exists():
         print("\n═══ Generating Rule-Based vs ML Plot ═══")

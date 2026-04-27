@@ -22,7 +22,8 @@ import warnings
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
-    accuracy_score, f1_score, mean_absolute_error, mean_squared_error,
+    accuracy_score, classification_report, confusion_matrix, f1_score,
+    mean_absolute_error, mean_squared_error, precision_score, recall_score,
 )
 from sklearn.model_selection import GroupKFold, KFold
 
@@ -221,7 +222,14 @@ def train_regression(df, feature_cols, target_col, groups=None):
 
 
 def train_classifier(df, feature_cols, target_col, groups=None):
-    """Train XGBoost 3-class classifier."""
+    """
+    Train XGBoost 3-class classifier and report the standard
+    classification metrics requested under RQ1: accuracy, macro
+    precision, macro recall, macro F1. Per-class precision and recall
+    are also returned alongside the aggregated confusion matrix
+    summed across folds, so the evaluation chapter can show *which*
+    class the model confuses.
+    """
     try:
         from xgboost import XGBClassifier
     except ImportError:
@@ -252,21 +260,62 @@ def train_classifier(df, feature_cols, target_col, groups=None):
         splits = list(cv.split(X, y))
 
     acc_scores = []
-    f1_scores_list = []
+    f1_macro_scores = []
+    precision_macro_scores = []
+    recall_macro_scores = []
+    # Per-class metrics — list-of-lists indexed by [fold][class].
+    per_class_precision = []
+    per_class_recall = []
+    # Aggregated confusion matrix summed across folds (3x3 for low/med/high).
+    cm_total = np.zeros((3, 3), dtype=int)
 
     for train_idx, val_idx in splits:
         model.fit(X[train_idx], y[train_idx])
         preds = model.predict(X[val_idx])
         acc_scores.append(accuracy_score(y[val_idx], preds))
-        f1_scores_list.append(f1_score(y[val_idx], preds, average="macro"))
+        f1_macro_scores.append(
+            f1_score(y[val_idx], preds, average="macro", zero_division=0),
+        )
+        precision_macro_scores.append(
+            precision_score(y[val_idx], preds, average="macro", zero_division=0),
+        )
+        recall_macro_scores.append(
+            recall_score(y[val_idx], preds, average="macro", zero_division=0),
+        )
+        per_class_precision.append(
+            precision_score(y[val_idx], preds, average=None,
+                            labels=[0, 1, 2], zero_division=0).tolist(),
+        )
+        per_class_recall.append(
+            recall_score(y[val_idx], preds, average=None,
+                         labels=[0, 1, 2], zero_division=0).tolist(),
+        )
+        cm_total += confusion_matrix(y[val_idx], preds, labels=[0, 1, 2])
 
     model.fit(X, y)
+
+    # Per-class summaries (mean across folds).
+    pcp = np.array(per_class_precision)
+    pcr = np.array(per_class_recall)
 
     return model, {
         "accuracy_mean": float(np.mean(acc_scores)),
         "accuracy_std": float(np.std(acc_scores)),
-        "f1_macro_mean": float(np.mean(f1_scores_list)),
-        "f1_macro_std": float(np.std(f1_scores_list)),
+        "precision_macro_mean": float(np.mean(precision_macro_scores)),
+        "precision_macro_std": float(np.std(precision_macro_scores)),
+        "recall_macro_mean": float(np.mean(recall_macro_scores)),
+        "recall_macro_std": float(np.std(recall_macro_scores)),
+        "f1_macro_mean": float(np.mean(f1_macro_scores)),
+        "f1_macro_std": float(np.std(f1_macro_scores)),
+        "per_class": {
+            "labels": ["low", "medium", "high"],
+            "precision_mean": pcp.mean(axis=0).tolist(),
+            "precision_std": pcp.std(axis=0).tolist(),
+            "recall_mean": pcr.mean(axis=0).tolist(),
+            "recall_std": pcr.std(axis=0).tolist(),
+        },
+        "confusion_matrix": cm_total.tolist(),
+        "confusion_matrix_labels": ["low", "medium", "high"],
     }
 
 
@@ -358,8 +407,14 @@ def main():
     df_cls = df_train.copy()
     df_cls["target_scaled"] = df_cls[target_col] / 5.0 * 100  # 1-5 → 20-100
     cls_model, cls_metrics = train_classifier(df_cls, available_features, "target_scaled", "session_id")
-    print(f"  Accuracy: {cls_metrics['accuracy_mean']:.3f} ± {cls_metrics['accuracy_std']:.3f}")
-    print(f"  F1 Macro: {cls_metrics['f1_macro_mean']:.3f} ± {cls_metrics['f1_macro_std']:.3f}")
+    print(f"  Accuracy:        {cls_metrics['accuracy_mean']:.3f} ± {cls_metrics['accuracy_std']:.3f}")
+    print(f"  Precision macro: {cls_metrics['precision_macro_mean']:.3f} ± {cls_metrics['precision_macro_std']:.3f}")
+    print(f"  Recall macro:    {cls_metrics['recall_macro_mean']:.3f} ± {cls_metrics['recall_macro_std']:.3f}")
+    print(f"  F1 macro:        {cls_metrics['f1_macro_mean']:.3f} ± {cls_metrics['f1_macro_std']:.3f}")
+    pc = cls_metrics.get("per_class", {})
+    if pc:
+        for cls, p, r in zip(pc["labels"], pc["precision_mean"], pc["recall_mean"]):
+            print(f"    {cls:6s} precision {p:.3f}  recall {r:.3f}")
 
     cls_model.save_model(str(XGBOOST_CLASSIFIER))
 
