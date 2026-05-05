@@ -8,13 +8,14 @@ Developed as an MSc Individual Project at King's College London.
 
 ## Key Features
 
-- **36-dimensional feature vector** per 2-second sample across four modalities (visual, behavioural, contextual, temporal).
+- **Locked In time** — a wall-clock measure of how long the user was actually focused, derived from webcam-anchored signals and surfaced as the headline metric in every session report.
+- **36-dimensional feature vector** per 2-second sample across four modalities (visual, behavioural, contextual, temporal), including phone-use detection and system-wide idle detection (W3C Idle Detection API).
 - **Privacy-preserving:** all webcam processing runs locally in the browser via WebAssembly. Only numerical features leave the client.
 - **Dual scoring:** a deterministic rule-based scorer for interpretability and fallback, plus a machine-learned scorer (XGBoost → TensorFlow.js) for nuanced, context-aware estimation.
 - **Ground-truth collection:** Experience Sampling Method (ESM) popups during sessions and post-session ratings, supporting a three-layer label strategy for ML training.
-- **Full session lifecycle:** task-type selection, periodic event upload (crash-safe), pause/resume, history, per-session reports, deletion.
-- **Tested:** 105+ automated tests (Django unit tests, Vitest component tests, Playwright end-to-end).
-- **Deployable:** single-service deploy on Render.com via `render.yaml`; Django serves the built React bundle through WhiteNoise.
+- **Full session lifecycle:** task-type selection, periodic event upload (crash-safe), pause/resume, history, per-session reports, deletion. The session timer is anchored to wall clock so totals stay correct even when the tab is throttled.
+- **Tested:** 230+ automated tests — 76 Django unit/integration, 147 Vitest unit/component, 9 Playwright end-to-end.
+- **Deployable:** single-service deploy on Render.com via `render.yaml`; Django serves the built React bundle through WhiteNoise, with a managed Postgres (Supabase) configured by `DATABASE_URL`.
 
 ---
 
@@ -99,13 +100,13 @@ The dev server proxies `/api` to `http://localhost:8000` automatically.
 ## Running Tests
 
 ```bash
-# Backend — 66 Django tests
+# Backend — 76 Django tests
 cd backend && python manage.py test api.tests
 
-# Frontend unit — 39 Vitest tests
+# Frontend unit — 147 Vitest tests
 cd frontend && npm test
 
-# End-to-end — Playwright specs (requires both servers running)
+# End-to-end — 9 Playwright specs (requires both servers running)
 cd frontend && npm run test:e2e
 ```
 
@@ -139,6 +140,7 @@ Required environment variables in production:
 | `DEBUG` | `false` |
 | `DJANGO_SECRET_KEY` | (randomly generated) |
 | `ALLOWED_HOSTS` | `.onrender.com` |
+| `DATABASE_URL` | `postgresql://…` (Supabase) — falls back to SQLite if unset |
 
 ---
 
